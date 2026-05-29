@@ -130,6 +130,11 @@ async function getDb() {
 async function initDb() {
   const db = await getDb();
   await db.execAsync(`PRAGMA journal_mode = WAL;`);
+  // Drop unique bon constraint if it exists (for existing installs)
+  try { await db.execAsync(`DROP INDEX IF EXISTS idx_bon_unique`); } catch(e) {}
+  // Add edit-tracking columns if not exist
+  try { await db.execAsync(`ALTER TABLE transactions ADD COLUMN edited_at TEXT`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE transactions ADD COLUMN original_values TEXT`); } catch(e) {}
   // Migration: add theme_mode column if not exists
   try {
     await db.execAsync(`ALTER TABLE settings ADD COLUMN theme_mode TEXT NOT NULL DEFAULT 'dark'`);
@@ -180,7 +185,7 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_txn_year      ON transactions(year, sales_name)  WHERE deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_txn_yearmonth ON transactions(year_month)        WHERE deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_txn_customer  ON transactions(sales_name, customer_norm) WHERE deleted_at IS NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_bon_unique ON transactions(bon_number) WHERE deleted_at IS NULL;
+    -- NOTE: NO unique index on bon_number — same number allowed across sales or after reset
   `);
 }
 
@@ -211,7 +216,9 @@ function dbRowToTx(row) {
     date:        row.transaction_date,
     notes:       row.notes || '',
     createdAt:   row.created_at,
-    deletedAt:   row.deleted_at || null,
+    deletedAt:     row.deleted_at || null,
+    editedAt:      row.edited_at || null,
+    originalValues:row.original_values ? JSON.parse(row.original_values) : null,
   };
 }
 
@@ -273,7 +280,7 @@ async function insertTransaction(db, tx) {
   );
 }
 
-async function updateTransaction(db, id, fields) {
+async function updateTransaction(db, id, fields, originalTx) {
   const now = new Date().toISOString();
   const sets = [];
   const vals = [];
@@ -291,6 +298,23 @@ async function updateTransaction(db, id, fields) {
   }
   if (fields.notes      != null) { sets.push('notes=?');            vals.push(fields.notes); }
   if (!sets.length) return;
+  // Save edit audit: only snapshot original values on FIRST edit
+  if (originalTx && !originalTx.editedAt) {
+    sets.push('edited_at=?');
+    vals.push(now);
+    sets.push('original_values=?');
+    vals.push(JSON.stringify({
+      bonNumber: originalTx.bonNumber,
+      sales: originalTx.sales,
+      customerName: originalTx.customerName,
+      amount: originalTx.amount,
+      date: originalTx.date,
+      notes: originalTx.notes,
+    }));
+  } else if (originalTx) {
+    // Already edited before — just update edited_at timestamp
+    sets.push('edited_at=?'); vals.push(now);
+  }
   sets.push('updated_at=?'); vals.push(now);
   vals.push(id);
   await db.runAsync(`UPDATE transactions SET ${sets.join(',')} WHERE id=?`, vals);
@@ -487,23 +511,20 @@ function SetupWizard({ data, onComplete }) {
   const [step, setStep]         = useState(1);
   const [company, setCompany]   = useState(data?.companyName || '');
   const [numS, setNumS]         = useState('2');
-  const [names, setNames]       = useState(['','']);
+  // FIX: use ref (not state) for sales names to prevent Android double-input bug
+  // onChangeText updating state causes IME to re-fire on some Android keyboards
+  const salesNamesRef = useRef({});
   const [prefix, setPrefix]     = useState('INV');
   const [sep, setSep]           = useState('-');
   const [digits, setDigits]     = useState('5');
   const [fmt, setFmt]           = useState('dd/mm/yyyy');
 
-  useEffect(() => {
-    const n = Math.min(20, Math.max(1, parseInt(numS)||1));
-    setNames(prev => {
-      const arr = [...prev];
-      while (arr.length < n) arr.push('');
-      return arr.slice(0, n);
-    });
-  }, [numS]);
+  // Note: sales name values are managed via salesNamesRef, no useEffect needed
 
   const finish = () => {
-    const valid = names.filter(n => n.trim());
+    const numSalesInt2 = Math.min(20, Math.max(1, parseInt(numS)||1));
+    const refValues = Array.from({length: numSalesInt2}, (_, i) => salesNamesRef.current[i] || '');
+    const valid = refValues.filter(n => n.trim());
     if (!company.trim()) { Alert.alert('','Isi nama bisnis dulu'); return; }
     if (!valid.length)   { Alert.alert('','Minimal 1 sales'); return; }
     onComplete({
@@ -530,13 +551,18 @@ function SetupWizard({ data, onComplete }) {
     // Step 3: sales names
     <View key={3}>
       <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:8 }}>Nama Sales</Text>
-      {names.map((n,i) => (
-        <TextInput key={i} value={n}
-          onChangeText={v => { const a=[...names]; a[i]=v; setNames(a); }}
+      {Array.from({ length: Math.min(20, Math.max(1, parseInt(numS)||1)) }, (_, i) => (
+        <TextInput
+          key={`sales-${i}-${numS}`}
+          defaultValue={salesNamesRef.current[i] || ''}
+          onChangeText={v => { salesNamesRef.current[i] = v; }}
           autoCorrect={false}
           autoComplete="off"
-          placeholder={`Sales ${i+1}`} placeholderTextColor={C.muted}
-          style={[st.input, {marginBottom:8}]} />
+          autoCapitalize="none"
+          placeholder={`Sales ${i+1}`}
+          placeholderTextColor={C.muted}
+          style={[st.input, {marginBottom:8}]}
+        />
       ))}
     </View>,
     // Step 4: bon format
@@ -971,6 +997,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
   const [salesF, setSalesF]   = useState('ALL');
   const [editTx, setEditTx]   = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [editLogTx, setEditLogTx] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1028,6 +1055,11 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
               <Text style={{ color:salesColor, fontSize:10, fontWeight:'700' }}>{tx.sales}</Text>
             </View>
             {isDeleted && <Text style={{ color:C.muted, fontSize:10, fontStyle:'italic' }}>dihapus</Text>}
+            {!isDeleted && tx.editedAt && (
+              <TouchableOpacity onPress={() => setEditLogTx(tx)}>
+                <Text style={{ color:C.warning, fontSize:10, fontWeight:'700' }}>✎ edited</Text>
+              </TouchableOpacity>
+            )}
           </View>
           {isDeleted ? (
             <TouchableOpacity onPress={() => onRestore(tx.id)}
@@ -1140,6 +1172,59 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
           </KeyboardAvoidingView>
         </View>
       </Modal>
+      {/* Edit Log Modal */}
+      {editLogTx && (
+        <Modal visible animationType="fade" transparent onRequestClose={() => setEditLogTx(null)}>
+          <TouchableOpacity style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.6)' }}
+            onPress={() => setEditLogTx(null)} activeOpacity={1}>
+            <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, paddingBottom:36 }}>
+              <Text style={{ color:C.text, fontSize:16, fontWeight:'800', marginBottom:16 }}>
+                📋 Log Perubahan
+              </Text>
+              <Text style={{ color:C.muted, fontSize:11, marginBottom:8 }}>
+                Terakhir diedit: {editLogTx.editedAt ? new Date(editLogTx.editedAt).toLocaleString('id-ID') : '-'}
+              </Text>
+              {editLogTx.originalValues ? <>
+                <Text style={{ color:C.warning, fontSize:12, fontWeight:'700', marginBottom:6 }}>SEBELUM DIEDIT:</Text>
+                {[
+                  ['No. Bon', editLogTx.originalValues.bonNumber],
+                  ['Sales',   editLogTx.originalValues.sales],
+                  ['Pelanggan', editLogTx.originalValues.customerName],
+                  ['Nominal', toIdr(editLogTx.originalValues.amount)],
+                  ['Tanggal', editLogTx.originalValues.date],
+                  ['Catatan', editLogTx.originalValues.notes || '-'],
+                ].map(([label, val]) => (
+                  <View key={label} style={{ flexDirection:'row', marginBottom:4 }}>
+                    <Text style={{ color:C.muted, fontSize:12, width:80 }}>{label}:</Text>
+                    <Text style={{ color:C.text, fontSize:12, flex:1 }}>{val}</Text>
+                  </View>
+                ))}
+                <View style={{ height:1, backgroundColor:C.border, marginVertical:10 }} />
+                <Text style={{ color:C.success, fontSize:12, fontWeight:'700', marginBottom:6 }}>SESUDAH DIEDIT:</Text>
+                {[
+                  ['No. Bon', editLogTx.bonNumber],
+                  ['Sales',   editLogTx.sales],
+                  ['Pelanggan', editLogTx.customerName],
+                  ['Nominal', toIdr(editLogTx.amount)],
+                  ['Tanggal', editLogTx.date],
+                  ['Catatan', editLogTx.notes || '-'],
+                ].map(([label, val]) => (
+                  <View key={label} style={{ flexDirection:'row', marginBottom:4 }}>
+                    <Text style={{ color:C.muted, fontSize:12, width:80 }}>{label}:</Text>
+                    <Text style={{ color:C.text, fontSize:12, flex:1 }}>{val}</Text>
+                  </View>
+                ))}
+              </> : (
+                <Text style={{ color:C.muted, fontSize:13 }}>Tidak ada data original (edited sebelum fitur log aktif)</Text>
+              )}
+              <TouchableOpacity onPress={() => setEditLogTx(null)}
+                style={{ marginTop:16, backgroundColor:C.input, borderRadius:12, padding:12, alignItems:'center' }}>
+                <Text style={{ color:C.text, fontWeight:'700' }}>Tutup</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -1486,12 +1571,251 @@ function SettingsModal({ data, onUpdate, onClose }) {
   );
 }
 
+
+// ─── CUSTOMER LIST + DETAIL ───────────────────────────────────────────────────
+function getCustomerList(transactions, salesFilter) {
+  const map = {};
+  transactions
+    .filter(t => !t.deletedAt && (salesFilter === 'ALL' || t.sales === salesFilter))
+    .forEach(t => {
+      const key = `${t.sales}|||${getNorm(t.customerName)}`;
+      if (!map[key]) map[key] = {
+        name: t.customerName,
+        sales: t.sales,
+        total: 0, count: 0,
+        lastDate: '', firstDate: '9999-99-99',
+      };
+      map[key].total += t.amount;
+      map[key].count += 1;
+      if (t.date > map[key].lastDate)  map[key].lastDate  = t.date;
+      if (t.date < map[key].firstDate) map[key].firstDate = t.date;
+    });
+  return Object.values(map).sort((a, b) =>
+    a.name.localeCompare(b.name, 'id', { sensitivity: 'base' })
+  );
+}
+
+function CustomersScreen({ data }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+  const { salesList, transactions, dateFormat } = data;
+  const [salesF, setSalesF]       = useState('ALL');
+  const [search, setSearch]       = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+
+  const allCustomers = useMemo(
+    () => getCustomerList(transactions, salesF),
+    [transactions, salesF]
+  );
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return allCustomers;
+    const q = search.trim().toLowerCase();
+    return allCustomers.filter(c =>
+      c.name.toLowerCase().includes(q)
+    );
+  }, [allCustomers, search]);
+
+  // Group A-Z
+  const grouped = useMemo(() => {
+    const sections = {};
+    filtered.forEach(c => {
+      const letter = (c.name[0] || '#').toUpperCase();
+      const key = /[A-Z]/.test(letter) ? letter : '#';
+      if (!sections[key]) sections[key] = [];
+      sections[key].push(c);
+    });
+    return Object.entries(sections).sort(([a], [b]) => a.localeCompare(b));
+  }, [filtered]);
+
+  const renderCustomerItem = ({ item: c }) => {
+    const salesColor = COLORS[salesList.indexOf(c.sales) % COLORS.length] || C.primary;
+    return (
+      <TouchableOpacity onPress={() => setSelectedCustomer(c)}
+        style={[st.card, { flexDirection:'row', alignItems:'center', marginBottom:8, paddingVertical:12 }]}>
+        {/* Avatar */}
+        <View style={{ width:44, height:44, borderRadius:22, backgroundColor:salesColor+'33',
+          alignItems:'center', justifyContent:'center', marginRight:12 }}>
+          <Text style={{ color:salesColor, fontSize:18, fontWeight:'800' }}>
+            {c.name[0]?.toUpperCase() || '?'}
+          </Text>
+        </View>
+        <View style={{ flex:1 }}>
+          <Text style={{ color:C.text, fontSize:15, fontWeight:'700' }}>{c.name}</Text>
+          <Text style={{ color:C.muted, fontSize:11, marginTop:1 }}>
+            <Text style={{ color:salesColor }}>{c.sales}</Text>
+            {'  ·  '}{c.count} bon {'·'} terakhir {fmtDate(c.lastDate, dateFormat)}
+          </Text>
+        </View>
+        <Text style={[st.mono, { color:C.accent, fontSize:13, fontWeight:'800' }]}>
+          {toShort(c.total)}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <View style={st.flex1}>
+      {/* Search + filter */}
+      <View style={{ padding:14, paddingBottom:0 }}>
+        <TextInput value={search} onChangeText={setSearch}
+          placeholder="🔍  Cari nama pelanggan..." placeholderTextColor={C.muted}
+          style={[st.input, { marginBottom:10, fontSize:14 }]} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:10, maxHeight:46 }}>
+          <View style={{ flexDirection:'row', gap:8 }}>
+            {['ALL', ...salesList].map((sl, i) => {
+              const active = salesF === sl;
+              const color  = i === 0 ? C.accent : COLORS[(i-1) % COLORS.length];
+              return (
+                <TouchableOpacity key={sl} onPress={() => setSalesF(sl)}
+                  style={{ paddingHorizontal:14, paddingVertical:7, borderRadius:8,
+                    backgroundColor: active ? color : C.input }}>
+                  <Text style={{ color: active ? '#fff' : C.muted, fontSize:12, fontWeight:'700' }}>{sl}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </ScrollView>
+        <Text style={{ color:C.muted, fontSize:11, marginBottom:6 }}>
+          {filtered.length} pelanggan
+        </Text>
+      </View>
+
+      {/* A-Z grouped list */}
+      {grouped.length === 0 ? (
+        <View style={{ alignItems:'center', paddingVertical:60 }}>
+          <Text style={{ fontSize:40, marginBottom:12 }}>👥</Text>
+          <Text style={{ color:C.muted }}>Belum ada pelanggan</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={grouped}
+          keyExtractor={([letter]) => letter}
+          contentContainerStyle={{ paddingHorizontal:14, paddingBottom:110 }}
+          renderItem={({ item: [letter, customers] }) => (
+            <View key={letter}>
+              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800',
+                marginTop:12, marginBottom:4, letterSpacing:0.5 }}>
+                {letter}
+              </Text>
+              {customers.map(c => renderCustomerItem({ item: c }))}
+            </View>
+          )}
+        />
+      )}
+
+      {/* Customer Detail Modal */}
+      {selectedCustomer && (
+        <CustomerDetailModal
+          customer={selectedCustomer}
+          transactions={transactions}
+          dateFormat={dateFormat}
+          salesList={salesList}
+          onClose={() => setSelectedCustomer(null)}
+        />
+      )}
+    </View>
+  );
+}
+
+function CustomerDetailModal({ customer, transactions, dateFormat, salesList, onClose }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+  const salesColor = COLORS[salesList.indexOf(customer.sales) % COLORS.length] || C.primary;
+
+  // All transactions for this customer+sales
+  const custTxns = useMemo(() =>
+    transactions
+      .filter(t => !t.deletedAt &&
+        t.sales === customer.sales &&
+        getNorm(t.customerName) === getNorm(customer.name))
+      .sort((a, b) => b.date.localeCompare(a.date)),
+    [transactions, customer]
+  );
+
+  const totalSpent  = custTxns.reduce((a, t) => a + t.amount, 0);
+  const avgPerBon   = custTxns.length > 0 ? Math.round(totalSpent / custTxns.length) : 0;
+
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View style={[st.container, { paddingTop: Platform.OS==='ios' ? 44 : StatusBar.currentHeight||0 }]}>
+        {/* Header */}
+        <View style={{ backgroundColor:salesColor, padding:20, paddingBottom:24 }}>
+          <TouchableOpacity onPress={onClose} style={{ marginBottom:12 }}>
+            <Text style={{ color:'rgba(255,255,255,0.8)', fontSize:14 }}>← Kembali</Text>
+          </TouchableOpacity>
+          <View style={{ flexDirection:'row', alignItems:'center', gap:14 }}>
+            <View style={{ width:56, height:56, borderRadius:28, backgroundColor:'rgba(255,255,255,0.25)',
+              alignItems:'center', justifyContent:'center' }}>
+              <Text style={{ color:'#fff', fontSize:24, fontWeight:'800' }}>
+                {customer.name[0]?.toUpperCase() || '?'}
+              </Text>
+            </View>
+            <View>
+              <Text style={{ color:'#fff', fontSize:20, fontWeight:'800' }}>{customer.name}</Text>
+              <Text style={{ color:'rgba(255,255,255,0.75)', fontSize:13 }}>{customer.sales}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Stats row */}
+        <View style={{ flexDirection:'row', gap:0, backgroundColor:C.card,
+          borderBottomWidth:1, borderBottomColor:C.border }}>
+          {[
+            ['Total Belanja', toIdr(totalSpent)],
+            ['Jumlah Bon', String(custTxns.length) + ' bon'],
+            ['Rata-rata', toShort(avgPerBon)],
+          ].map(([lbl, val], i) => (
+            <View key={i} style={{ flex:1, padding:14, borderRightWidth: i<2 ? 1 : 0, borderRightColor:C.border }}>
+              <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase', marginBottom:4 }}>
+                {lbl}
+              </Text>
+              <Text style={[st.mono, { color: i===0 ? C.accent : C.text, fontSize:14, fontWeight:'800' }]}>
+                {val}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Transaction list */}
+        <FlatList
+          data={custTxns}
+          keyExtractor={t => String(t.id)}
+          contentContainerStyle={{ padding:14, paddingBottom:40 }}
+          ListEmptyComponent={
+            <Text style={{ color:C.muted, textAlign:'center', marginTop:40 }}>
+              Belum ada transaksi
+            </Text>
+          }
+          renderItem={({ item: t }) => (
+            <View style={[st.card, { marginBottom:8, borderLeftWidth:3, borderLeftColor:salesColor }]}>
+              <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:4 }}>
+                <Text style={[st.mono, { color:C.muted, fontSize:11 }]}>#{t.bonNumber}</Text>
+                {t.editedAt && <Text style={{ color:C.warning, fontSize:10 }}>✎ edited</Text>}
+              </View>
+              <View style={{ flexDirection:'row', justifyContent:'space-between' }}>
+                <Text style={{ color:C.muted, fontSize:12 }}>{fmtDate(t.date, dateFormat)}</Text>
+                <Text style={[st.mono, { color:C.accent, fontSize:15, fontWeight:'800' }]}>
+                  {toIdr(t.amount)}
+                </Text>
+              </View>
+              {t.notes ? <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{t.notes}</Text> : null}
+            </View>
+          )}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 const TABS = [
-  { id:'input',     icon:'✚', label:'Input'     },
-  { id:'dashboard', icon:'◈', label:'Dashboard' },
-  { id:'riwayat',   icon:'☰', label:'Riwayat'   },
-  { id:'ranking',   icon:'★', label:'Ranking'   },
+  { id:'input',      icon:'✚', label:'Input'      },
+  { id:'dashboard',  icon:'◈', label:'Dashboard'  },
+  { id:'riwayat',    icon:'☰', label:'Riwayat'    },
+  { id:'ranking',    icon:'★', label:'Ranking'    },
+  { id:'pelanggan',  icon:'👥', label:'Pelanggan'  },
 ];
 
 export default function App() {
@@ -1566,9 +1890,10 @@ export default function App() {
   }, [reloadData]);
 
   const handleEdit = useCallback(async (id, fields) => {
-    await updateTransaction(dbRef.current, id, fields);
+    const originalTx = data?.transactions?.find(t => t.id === id);
+    await updateTransaction(dbRef.current, id, fields, originalTx);
     await reloadData();
-  }, [reloadData]);
+  }, [data, reloadData]);
 
   const handleRestore = useCallback(async (id) => {
     await restoreTransaction(dbRef.current, id);
@@ -1657,6 +1982,7 @@ export default function App() {
         {tab==='dashboard' && <DashboardScreen data={data} onYearChange={handleYearChange} />}
         {tab==='riwayat'   && <HistoryScreen data={data} onDelete={handleDelete} onEdit={handleEdit} onRestore={handleRestore} />}
         {tab==='ranking'   && <RankingScreen data={data} />}
+        {tab==='pelanggan' && <CustomersScreen data={data} />}
       </View>
 
       {/* Bottom tabs */}
