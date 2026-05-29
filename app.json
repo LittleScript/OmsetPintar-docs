@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "CatatOmset",
-    "slug": "catat-omset",
+    "slug": "tracker-omset",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
