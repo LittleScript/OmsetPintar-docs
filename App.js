@@ -13,10 +13,11 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
   StyleSheet, Alert, Dimensions, Platform, Modal, ActivityIndicator,
-  KeyboardAvoidingView, StatusBar,
+  KeyboardAvoidingView, StatusBar, useColorScheme, Image,
 } from 'react-native';
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
@@ -27,16 +28,27 @@ const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt',
 const MONTHS_F   = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const COLORS     = ['#2563eb','#22c55e','#f59e0b','#ec4899','#8b5cf6','#ef4444','#06b6d4','#84cc16'];
 const DB_NAME    = 'tracker_omset.db';
-const APP_VER    = '1.0.0';
-const SCHEMA_VER = 1;
-const { width: SW } = Dimensions.get('window');
 
-const C = {
+// ─── THEMES ───────────────────────────────────────────────────────────────────
+const DARK_THEME = {
   bg:'#071018', card:'#0f1720', input:'#0a1929',
   border:'rgba(255,255,255,0.07)', primary:'#2563eb',
   success:'#22c55e', warning:'#f59e0b', text:'#f1f5f9',
   muted:'#64748b', accent:'#F57F17', danger:'#ef4444',
 };
+const LIGHT_THEME = {
+  bg:'#f0f4f8', card:'#ffffff', input:'#e2e8f0',
+  border:'rgba(0,0,0,0.09)', primary:'#2563eb',
+  success:'#16a34a', warning:'#d97706', text:'#1e293b',
+  muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
+};
+const APP_VER    = '1.0.0';
+const SCHEMA_VER = 1;
+const { width: SW } = Dimensions.get('window');
+
+// C is now a function — call getC() or pass C from App via context
+// Default export for static uses (outside components)
+let C = DARK_THEME;
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 const toIdr   = n => 'Rp ' + (n||0).toLocaleString('id-ID');
@@ -102,6 +114,10 @@ async function getDb() {
 async function initDb() {
   const db = await getDb();
   await db.execAsync(`PRAGMA journal_mode = WAL;`);
+  // Migration: add theme_mode column if not exists
+  try {
+    await db.execAsync(`ALTER TABLE settings ADD COLUMN theme_mode TEXT NOT NULL DEFAULT 'dark'`);
+  } catch(e) { /* column already exists, ok */ }
   await db.execAsync(`PRAGMA foreign_keys = ON;`);
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -189,6 +205,7 @@ async function assembleData(db) {
   const salesRows = await loadSales(db);
   const txRows    = await loadTransactions(db);
   return {
+    themeMode:     cfg.theme_mode || 'dark',
     companyName:    cfg.company_name,
     isSetupComplete:!!cfg.is_setup_complete,
     bonConfig: {
@@ -219,6 +236,11 @@ async function insertTransaction(db, tx) {
   if (exists) {
     console.warn(`Bon ${tx.bonNumber} already exists — using anyway`);
   }
+  // BUG FIX 4: continuation from manual bon number
+  // Extract last digit sequence from bon number, use max(nextSeq+1, parsedBon+1)
+  const parsedBonSeq = parseInt((tx.bonNumber||'').match(/(\d+)$/)?.[1]||'0', 10)||0;
+  tx.nextSeqAfterSave = Math.max(tx.nextSeq + 1, parsedBonSeq + 1);
+
   await db.runAsync(
     `INSERT INTO transactions
      (bon_number,bon_seq,sales_name,customer_name,customer_norm,amount,
@@ -229,7 +251,7 @@ async function insertTransaction(db, tx) {
   );
   await db.runAsync(
     `UPDATE settings SET current_seq=?, last_date=?, last_sales=? WHERE id=1`,
-    [tx.nextSeq + 1, tx.date, tx.sales]
+    [tx.nextSeqAfterSave, tx.date, tx.sales]
   );
 }
 
@@ -296,6 +318,7 @@ async function updateSettings(db, fields) {
   if (fields.bonSeparator!=null){ sets.push('bon_separator=?');  vals.push(fields.bonSeparator); }
   if (fields.bonDigits  !=null){ sets.push('bon_digit_length=?');vals.push(fields.bonDigits); }
   if (fields.activeYear !=null){ sets.push('active_year=?');     vals.push(fields.activeYear); }
+  if (fields.themeMode  !=null){ sets.push('theme_mode=?');      vals.push(fields.themeMode); }
   if (!sets.length) return;
   await db.runAsync(`UPDATE settings SET ${sets.join(',')} WHERE id=1`, vals);
 }
@@ -416,7 +439,8 @@ function LoginScreen({ onLogin }) {
   const [name, setName] = useState('');
   return (
     <View style={{ flex:1, justifyContent:'center', alignItems:'center', padding:24, backgroundColor:C.bg }}>
-      <Text style={{ fontSize:60, marginBottom:16 }}>🧸</Text>
+      <Image source={require('./assets/icon.png')}
+        style={{ width:90, height:90, borderRadius:20, marginBottom:16 }} />
       <Text style={{ color:C.text, fontSize:24, fontWeight:'800', marginBottom:8 }}>
         Tracker Omset
       </Text>
@@ -490,7 +514,8 @@ function SetupWizard({ data, onComplete }) {
       <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:8 }}>Nama Sales</Text>
       {names.map((n,i) => (
         <TextInput key={i} value={n}
-          onChangeText={v => { const a=[...names]; a[i]=v.toUpperCase(); setNames(a); }}
+          onChangeText={v => { const a=[...names]; a[i]=v; setNames(a); }}
+          autoCapitalize="characters"
           placeholder={`Sales ${i+1}`} placeholderTextColor={C.muted}
           style={[st.input, {marginBottom:8}]} />
       ))}
@@ -570,6 +595,7 @@ function InputScreen({ data, onSave }) {
   const [bonOverride, setBonOverride] = useState(false);
   const [saving, setSaving]       = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const amtRef = useRef(null);
 
   useEffect(() => {
@@ -623,8 +649,13 @@ function InputScreen({ data, onSave }) {
           </Text>
           {bonEditing ? (
             <TextInput value={bonNo}
-              onChangeText={v => { setBonNo(v); setBonOverride(true); }}
+              onChangeText={v => {
+                // FIX 5: no letters — only digits and common bon separators (-, /, .)
+                const clean = v.replace(/[^0-9\-\/\.]/g, '');
+                setBonNo(clean); setBonOverride(true);
+              }}
               onBlur={() => setBonEditing(false)} autoFocus
+              keyboardType="numbers-and-punctuation"
               style={[st.mono, { textAlign:'center', fontSize:26, fontWeight:'800', color:C.accent, borderBottomWidth:2, borderBottomColor:C.accent, minWidth:200, paddingVertical:4 }]}
             />
           ) : (
@@ -635,15 +666,32 @@ function InputScreen({ data, onSave }) {
           )}
         </TouchableOpacity>
 
-        {/* Date */}
+        {/* Date — FIX 8+9: show formatted date, calendar picker on tap */}
         <View style={{ marginBottom:14 }}>
           <Text style={st.label}>📅 Tanggal</Text>
-          <TextInput value={date} onChangeText={setDate}
-            placeholder="YYYY-MM-DD" placeholderTextColor={C.muted} style={st.input} />
-          <Text style={{ color:C.muted, fontSize:11, marginTop:4 }}>
-            {fmtDate(date, dateFormat)}
-          </Text>
+          <TouchableOpacity
+            onPress={() => setShowDatePicker(true)}
+            style={[st.input, { flexDirection:'row', justifyContent:'space-between', alignItems:'center' }]}>
+            <Text style={{ color:C.text, fontSize:16 }}>{fmtDate(date, dateFormat)}</Text>
+            <Text style={{ color:C.muted, fontSize:14 }}>📅</Text>
+          </TouchableOpacity>
         </View>
+        {showDatePicker && (
+          <DateTimePicker
+            value={new Date(date + 'T12:00:00')}
+            mode="date"
+            display={Platform.OS === 'android' ? 'calendar' : 'default'}
+            onChange={(event, selectedDate) => {
+              setShowDatePicker(false);
+              if (selectedDate) {
+                const y = selectedDate.getFullYear();
+                const m = String(selectedDate.getMonth()+1).padStart(2,'0');
+                const d = String(selectedDate.getDate()).padStart(2,'0');
+                setDate(`${y}-${m}-${d}`);
+              }
+            }}
+          />
+        )}
 
         {/* Sales */}
         <View style={{ marginBottom:14 }}>
@@ -745,15 +793,6 @@ function DashboardScreen({ data, onYearChange }) {
     });
     return { name:m, ...totals, total:mTx.reduce((a,t)=>a+t.amount,0) };
   });
-
-  // Build chart datasets for react-native-chart-kit
-  const chartData = {
-    labels: monthly.map(m => m.name.slice(0,3)),
-    datasets: salesList.length>0 ? salesList.map((s,i) => ({
-      data: monthly.map(m => (m[s]||0) / (yearTotal||1) * 100), // % for display
-      color: (opacity=1) => COLORS[i%COLORS.length] + Math.round(opacity*255).toString(16).padStart(2,'0'),
-    })) : [{ data: monthly.map(m => m.total || 0), color: (o=1) => C.primary }],
-  };
 
   return (
     <ScrollView style={st.container} contentContainerStyle={st.scroll}>
@@ -1183,6 +1222,7 @@ function RankingScreen({ data }) {
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
 function SettingsModal({ data, onUpdate, onClose }) {
   const { salesList, bonConfig, dateFormat, companyName } = data;
+  const [themeMode, setThemeMode]= useState(data.themeMode||'dark');
   const [company, setCompany]   = useState(companyName||'');
   const [prefix,  setPrefix]    = useState(bonConfig?.prefix||'INV');
   const [sep,     setSep]       = useState(bonConfig?.separator||'-');
@@ -1346,6 +1386,20 @@ function SettingsModal({ data, onUpdate, onClose }) {
             </TouchableOpacity>
           </View>
 
+          {/* Theme */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
+              TAMPILAN
+            </Text>
+            {[['dark','🌙  Mode Gelap'],['light','☀️  Mode Terang'],['system','📱  Ikuti HP']].map(([val,lbl]) => (
+              <TouchableOpacity key={val} onPress={() => { setThemeMode(val); onUpdate({ themeMode: val }); }}
+                style={{ flexDirection:'row', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
+                <Text style={{ color:C.text, fontSize:14 }}>{lbl}</Text>
+                {themeMode===val && <Text style={{ color:C.success }}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+
           {/* Save */}
           <TouchableOpacity onPress={save} style={[btnStyle(C.success), {marginTop:4}]}>
             <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>✓  Simpan Pengaturan</Text>
@@ -1375,6 +1429,7 @@ export default function App() {
   const [tab,      setTab]      = useState('input');
   const [showSett, setShowSett] = useState(false);
   const [saveState,setSaveState]= useState('idle'); // 'idle'|'saving'|'saved'|'error'
+  const systemScheme = useColorScheme();
   const dbRef = useRef(null);
 
   // Init DB + load data
@@ -1384,6 +1439,10 @@ export default function App() {
         await initDb();
         dbRef.current = await getDb();
         const loaded = await assembleData(dbRef.current);
+        // Apply saved theme
+        const savedTheme = loaded?.themeMode || 'dark';
+        const isDark = savedTheme === 'system' ? (systemScheme !== 'light') : savedTheme === 'dark';
+        C = isDark ? DARK_THEME : LIGHT_THEME;
         setData(loaded || { isSetupComplete: false, salesList: [], transactions: [], companyName: '', bonConfig:{prefix:'INV',separator:'-',digitLength:5}, dateFormat:'dd/mm/yyyy', activeYear:new Date().getFullYear(), lastDate:todayStr(), lastSales:'', nextSeq:1 });
         setDbReady(true);
       } catch(e) {
@@ -1443,6 +1502,11 @@ export default function App() {
 
   const handleSettingsUpdate = useCallback(async (fields) => {
     const db = dbRef.current;
+    // Apply theme immediately if changed
+    if (fields.themeMode) {
+      const isDark = fields.themeMode === 'system' ? (systemScheme !== 'light') : fields.themeMode === 'dark';
+      C = isDark ? DARK_THEME : LIGHT_THEME;
+    }
     if (fields.addSales) {
       await addSales(db, fields.addSales, null, data.salesList.length);
     } else if (fields.removeSales) {
@@ -1460,7 +1524,8 @@ export default function App() {
   if (loading) {
     return (
       <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
-        <Text style={{ fontSize:48, marginBottom:16 }}>🧸</Text>
+        <Image source={require('./assets/icon.png')}
+        style={{ width:80, height:80, borderRadius:18, marginBottom:16 }} />
         <ActivityIndicator color={C.primary} size="large" />
       </View>
     );
@@ -1490,7 +1555,8 @@ export default function App() {
 
       {/* Header */}
       <View style={{ flexDirection:'row', alignItems:'center', paddingHorizontal:16, paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
-        <Text style={{ fontSize:22, marginRight:10 }}>🧸</Text>
+        <Image source={require('./assets/icon.png')}
+          style={{ width:32, height:32, borderRadius:8, marginRight:10 }} />
         <View style={{ flex:1 }}>
           <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
             {data.companyName || 'Tracker Omset'}
@@ -1498,8 +1564,8 @@ export default function App() {
           <Text style={{ color:statusColor, fontSize:10 }}>{statusText}</Text>
         </View>
         <TouchableOpacity onPress={() => setShowSett(true)}
-          style={{ backgroundColor:C.input, borderRadius:10, padding:8 }}>
-          <Text style={{ fontSize:15 }}>⚙</Text>
+          style={{ backgroundColor:C.input, borderRadius:10, padding:8, borderWidth:1, borderColor:C.primary+'44' }}>
+          <Text style={{ fontSize:15, color:C.text }}>⚙</Text>
         </TouchableOpacity>
       </View>
 

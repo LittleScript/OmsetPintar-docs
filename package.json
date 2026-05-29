@@ -1,5 +1,5 @@
 {
-  "name": "tracker-omset",
+  "name": "catat-omset",
   "version": "1.0.0",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -17,8 +17,7 @@
     "expo-status-bar": "~2.0.0",
     "react": "18.3.1",
     "react-native": "0.76.9",
-    "react-native-chart-kit": "^6.12.0",
-    "react-native-svg": "15.8.0"
+    "@react-native-community/datetimepicker": "8.2.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.0"

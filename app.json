@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Tracker Omset",
-    "slug": "tracker-omset",
+    "name": "CatatOmset",
+    "slug": "catat-omset",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -22,7 +22,8 @@
     },
     "plugins": [
       "expo-sqlite",
-      "expo-asset"
+      "expo-asset",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {
