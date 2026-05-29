@@ -1622,6 +1622,8 @@ export default function App() {
     return <SetupWizard data={data} onComplete={handleSetupComplete} />;
   }
 
+  const st = getStyles(C);
+
   const statusText = saveState==='saving' ? 'Menyimpan...'
     : saveState==='error'  ? 'Gagal simpan!'
     : `${(data.transactions||[]).filter(t=>!t.deletedAt).length} bon · ${data.activeYear}`;
