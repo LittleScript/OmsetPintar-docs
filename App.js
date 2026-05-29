@@ -42,7 +42,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '1.0.0';
+const APP_VER    = '3.1.2';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
