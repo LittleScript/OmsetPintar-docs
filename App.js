@@ -1,0 +1,1538 @@
+/**
+ * Tracker Omset — App.js
+ * React Native (Expo) | Storage: expo-sqlite | All screens complete
+ *
+ * Fixed from DeepSeek baseline:
+ *  - HistoryScreen, RankingScreen, SettingsModal: fully implemented
+ *  - Storage: expo-sqlite (no JSON blob, proper tables + indexes)
+ *  - parseBon: handles dateCode formats
+ *  - todayStr: uses local timezone (not UTC)
+ *  - styles: moved fn helpers outside StyleSheet.create
+ *  - Double-save prevention on Input
+ *  - Soft delete with 24h undo in History
+ */
+
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
+  StyleSheet, Alert, Dimensions, Platform, Modal, ActivityIndicator,
+  KeyboardAvoidingView, StatusBar,
+} from 'react-native';
+import * as SQLite from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+const MONTHS_F   = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+const COLORS     = ['#2563eb','#22c55e','#f59e0b','#ec4899','#8b5cf6','#ef4444','#06b6d4','#84cc16'];
+const DB_NAME    = 'tracker_omset.db';
+const APP_VER    = '1.0.0';
+const SCHEMA_VER = 1;
+const { width: SW } = Dimensions.get('window');
+
+const C = {
+  bg:'#071018', card:'#0f1720', input:'#0a1929',
+  border:'rgba(255,255,255,0.07)', primary:'#2563eb',
+  success:'#22c55e', warning:'#f59e0b', text:'#f1f5f9',
+  muted:'#64748b', accent:'#F57F17', danger:'#ef4444',
+};
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+const toIdr   = n => 'Rp ' + (n||0).toLocaleString('id-ID');
+const toShort = n => n>=1e9?(n/1e9).toFixed(1)+'M':n>=1e6?(n/1e6).toFixed(1)+'Jt':n>=1e3?(n/1e3).toFixed(0)+'K':String(n||0);
+const padNum  = (n, len) => String(n).padStart(len, '0');
+
+// FIX: use local date, not UTC (avoids midnight UTC bug in WIB/UTC+7)
+const todayStr = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+};
+
+const fmtDate = (s, fmt='dd/mm/yyyy') => {
+  if (!s) return '';
+  const [y,m,d] = s.split('-');
+  if (!y||!m||!d) return s;
+  if (fmt==='mm/dd/yyyy') return `${m}/${d}/${y}`;
+  if (fmt==='yyyy/mm/dd') return `${y}/${m}/${d}`;
+  return `${d}/${m}/${y}`;
+};
+
+const genBon = (seq, cfg) =>
+  (cfg.prefix||'') + (cfg.separator||'') + padNum(seq, cfg.digitLength||5);
+
+// FIX: proper parseBon that handles dateCode formats
+// Strategy: strip known prefix+separator, then parse trailing digits
+const parseBon = (bonStr, cfg) => {
+  if (!bonStr) return 0;
+  const p = cfg.prefix || '';
+  const s = cfg.separator || '';
+  // Remove prefix+separator from start
+  let rest = bonStr.startsWith(p + s) ? bonStr.slice((p+s).length) : bonStr;
+  // If there's still a separator, take only the last segment (dateCode segment)
+  if (s && rest.includes(s)) {
+    const parts = rest.split(s);
+    rest = parts[parts.length - 1];
+  }
+  return parseInt(rest, 10) || 0;
+};
+
+const getMondayOfWeek = (date) => {
+  const d = new Date(date + 'T12:00:00'); // noon to avoid DST
+  const day = d.getDay();
+  const diff = (day === 0) ? -6 : 1 - day; // Monday = 1
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+};
+
+const getNorm = name => (name||'').trim().toLowerCase().replace(/\s+/g,' ');
+
+// ─── SQLITE LAYER ─────────────────────────────────────────────────────────────
+let _db = null;
+
+async function getDb() {
+  if (_db) return _db;
+  _db = await SQLite.openDatabaseAsync(DB_NAME);
+  return _db;
+}
+
+async function initDb() {
+  const db = await getDb();
+  await db.execAsync(`PRAGMA journal_mode = WAL;`);
+  await db.execAsync(`PRAGMA foreign_keys = ON;`);
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS settings (
+      id                 INTEGER PRIMARY KEY DEFAULT 1 CHECK(id=1),
+      company_name       TEXT    NOT NULL DEFAULT '',
+      is_setup_complete  INTEGER NOT NULL DEFAULT 0,
+      bon_prefix         TEXT    NOT NULL DEFAULT 'INV',
+      bon_separator      TEXT    NOT NULL DEFAULT '-',
+      bon_digit_length   INTEGER NOT NULL DEFAULT 5,
+      date_format        TEXT    NOT NULL DEFAULT 'dd/mm/yyyy',
+      active_year        INTEGER NOT NULL DEFAULT ${new Date().getFullYear()},
+      last_date          TEXT    NOT NULL DEFAULT '${todayStr()}',
+      last_sales         TEXT    NOT NULL DEFAULT '',
+      current_seq        INTEGER NOT NULL DEFAULT 1
+    );
+    INSERT OR IGNORE INTO settings (id) VALUES (1);
+
+    CREATE TABLE IF NOT EXISTS sales (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      name          TEXT    NOT NULL UNIQUE,
+      color         TEXT    NOT NULL DEFAULT '#2563eb',
+      active        INTEGER NOT NULL DEFAULT 1,
+      display_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS transactions (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      bon_number       TEXT    NOT NULL,
+      bon_seq          INTEGER NOT NULL,
+      sales_name       TEXT    NOT NULL,
+      customer_name    TEXT    NOT NULL,
+      customer_norm    TEXT    NOT NULL,
+      amount           INTEGER NOT NULL CHECK(amount > 0),
+      transaction_date TEXT    NOT NULL,
+      year             INTEGER NOT NULL,
+      year_month       TEXT    NOT NULL,
+      notes            TEXT    NOT NULL DEFAULT '',
+      created_at       TEXT    NOT NULL,
+      updated_at       TEXT    NOT NULL,
+      deleted_at       TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_txn_date      ON transactions(transaction_date)  WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_txn_year      ON transactions(year, sales_name)  WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_txn_yearmonth ON transactions(year_month)        WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_txn_customer  ON transactions(sales_name, customer_norm) WHERE deleted_at IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bon_unique ON transactions(bon_number) WHERE deleted_at IS NULL;
+  `);
+}
+
+// ─── DATA ACCESS ──────────────────────────────────────────────────────────────
+async function loadSettings(db) {
+  return db.getFirstAsync('SELECT * FROM settings WHERE id=1');
+}
+
+async function loadSales(db) {
+  return db.getAllAsync('SELECT * FROM sales WHERE active=1 ORDER BY display_order ASC');
+}
+
+async function loadTransactions(db) {
+  return db.getAllAsync(
+    'SELECT * FROM transactions WHERE deleted_at IS NULL ORDER BY id DESC'
+  );
+}
+
+function dbRowToTx(row) {
+  return {
+    id:          row.id,
+    bonNumber:   row.bon_number,
+    bonSeq:      row.bon_seq,
+    sales:       row.sales_name,
+    customerName:row.customer_name,
+    customerId:  row.sales_name+'___'+row.customer_norm,
+    amount:      row.amount,
+    date:        row.transaction_date,
+    notes:       row.notes || '',
+    createdAt:   row.created_at,
+    deletedAt:   row.deleted_at || null,
+  };
+}
+
+async function assembleData(db) {
+  const cfg  = await loadSettings(db);
+  if (!cfg) return null;
+  const salesRows = await loadSales(db);
+  const txRows    = await loadTransactions(db);
+  return {
+    companyName:    cfg.company_name,
+    isSetupComplete:!!cfg.is_setup_complete,
+    bonConfig: {
+      prefix:      cfg.bon_prefix,
+      separator:   cfg.bon_separator,
+      digitLength: cfg.bon_digit_length,
+    },
+    dateFormat:  cfg.date_format,
+    activeYear:  cfg.active_year || new Date().getFullYear(),
+    lastDate:    cfg.last_date   || todayStr(),
+    lastSales:   cfg.last_sales  || (salesRows[0]?.name || ''),
+    nextSeq:     cfg.current_seq || 1,
+    salesList:   salesRows.map(s => s.name),
+    salesData:   salesRows,
+    transactions:txRows.map(dbRowToTx),
+  };
+}
+
+async function insertTransaction(db, tx) {
+  const now = new Date().toISOString();
+  const year = parseInt(tx.date.slice(0,4), 10);
+  const ym   = tx.date.slice(0,7);
+  const norm = getNorm(tx.customerName);
+  // Duplicate check (warn only, don't block)
+  const exists = await db.getFirstAsync(
+    'SELECT id FROM transactions WHERE bon_number=? AND deleted_at IS NULL', [tx.bonNumber]
+  );
+  if (exists) {
+    console.warn(`Bon ${tx.bonNumber} already exists — using anyway`);
+  }
+  await db.runAsync(
+    `INSERT INTO transactions
+     (bon_number,bon_seq,sales_name,customer_name,customer_norm,amount,
+      transaction_date,year,year_month,notes,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [tx.bonNumber, tx.nextSeq, tx.sales, tx.customerName.trim(), norm,
+     tx.amount, tx.date, year, ym, tx.notes||'', now, now]
+  );
+  await db.runAsync(
+    `UPDATE settings SET current_seq=?, last_date=?, last_sales=? WHERE id=1`,
+    [tx.nextSeq + 1, tx.date, tx.sales]
+  );
+}
+
+async function updateTransaction(db, id, fields) {
+  const now = new Date().toISOString();
+  const sets = [];
+  const vals = [];
+  if (fields.bonNumber  != null) { sets.push('bon_number=?');       vals.push(fields.bonNumber); }
+  if (fields.sales      != null) { sets.push('sales_name=?');       vals.push(fields.sales); }
+  if (fields.customerName!=null) {
+    sets.push('customer_name=?'); vals.push(fields.customerName.trim());
+    sets.push('customer_norm=?'); vals.push(getNorm(fields.customerName));
+  }
+  if (fields.amount     != null) { sets.push('amount=?');           vals.push(fields.amount); }
+  if (fields.date       != null) {
+    sets.push('transaction_date=?'); vals.push(fields.date);
+    sets.push('year=?');             vals.push(parseInt(fields.date.slice(0,4),10));
+    sets.push('year_month=?');       vals.push(fields.date.slice(0,7));
+  }
+  if (fields.notes      != null) { sets.push('notes=?');            vals.push(fields.notes); }
+  if (!sets.length) return;
+  sets.push('updated_at=?'); vals.push(now);
+  vals.push(id);
+  await db.runAsync(`UPDATE transactions SET ${sets.join(',')} WHERE id=?`, vals);
+}
+
+async function softDeleteTransaction(db, id) {
+  await db.runAsync(
+    `UPDATE transactions SET deleted_at=? WHERE id=?`,
+    [new Date().toISOString(), id]
+  );
+}
+
+async function restoreTransaction(db, id) {
+  await db.runAsync(
+    `UPDATE transactions SET deleted_at=NULL, updated_at=? WHERE id=?`,
+    [new Date().toISOString(), id]
+  );
+}
+
+async function setupBusiness(db, setup) {
+  // Upsert settings
+  await db.runAsync(
+    `UPDATE settings SET company_name=?,bon_prefix=?,bon_separator=?,
+     bon_digit_length=?,date_format=?,is_setup_complete=1 WHERE id=1`,
+    [setup.companyName, setup.bonConfig.prefix,
+     setup.bonConfig.separator, setup.bonConfig.digitLength, setup.dateFormat]
+  );
+  // Reconcile sales
+  for (let i=0; i<setup.salesList.length; i++) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO sales (name, color, display_order) VALUES (?,?,?)`,
+      [setup.salesList[i], COLORS[i % COLORS.length], i]
+    );
+  }
+}
+
+async function updateSettings(db, fields) {
+  const sets = [];
+  const vals = [];
+  if (fields.companyName!=null){ sets.push('company_name=?');    vals.push(fields.companyName); }
+  if (fields.dateFormat !=null){ sets.push('date_format=?');     vals.push(fields.dateFormat); }
+  if (fields.bonPrefix  !=null){ sets.push('bon_prefix=?');      vals.push(fields.bonPrefix); }
+  if (fields.bonSeparator!=null){ sets.push('bon_separator=?');  vals.push(fields.bonSeparator); }
+  if (fields.bonDigits  !=null){ sets.push('bon_digit_length=?');vals.push(fields.bonDigits); }
+  if (fields.activeYear !=null){ sets.push('active_year=?');     vals.push(fields.activeYear); }
+  if (!sets.length) return;
+  await db.runAsync(`UPDATE settings SET ${sets.join(',')} WHERE id=1`, vals);
+}
+
+async function addSales(db, name, color, order) {
+  await db.runAsync(
+    `INSERT OR IGNORE INTO sales (name,color,display_order) VALUES (?,?,?)`,
+    [name.toUpperCase(), color || COLORS[order%COLORS.length], order]
+  );
+}
+
+async function deactivateSales(db, name) {
+  await db.runAsync(`UPDATE sales SET active=0 WHERE name=?`, [name]);
+}
+
+// ─── ANALYTICS ────────────────────────────────────────────────────────────────
+function getWeekBounds(refDate) {
+  const mon = getMondayOfWeek(refDate);
+  const d   = new Date(mon + 'T12:00:00');
+  d.setDate(d.getDate() + 6);
+  const sun = d.toISOString().slice(0,10);
+  return { mon, sun };
+}
+
+function filterByPeriod(txns, period, year, month) {
+  const today = todayStr();
+  switch(period) {
+    case 'today': return txns.filter(t => t.date === today);
+    case 'week': {
+      const { mon, sun } = getWeekBounds(today);
+      return txns.filter(t => t.date >= mon && t.date <= sun);
+    }
+    case 'month': {
+      const ym = `${year}-${String(month).padStart(2,'0')}`;
+      return txns.filter(t => t.date.startsWith(ym));
+    }
+    default: // year
+      return txns.filter(t => t.date.startsWith(String(year)));
+  }
+}
+
+function getRanking(txns, sales) {
+  const map = {};
+  txns.filter(t => t.sales === sales && !t.deletedAt).forEach(t => {
+    const k = getNorm(t.customerName);
+    if (!map[k]) map[k] = { name:t.customerName, total:0, count:0, last:'' };
+    map[k].total += t.amount;
+    map[k].count += 1;
+    if (t.date > map[k].last) map[k].last = t.date;
+  });
+  return Object.values(map).sort((a,b) => b.total-a.total);
+}
+
+function getAutocomplete(query, txns, sales, limit=5) {
+  if (query.length < 2) return [];
+  const q = query.trim().toLowerCase();
+  const map = {};
+  txns.filter(t => t.sales===sales && !t.deletedAt).forEach(t => {
+    const k = getNorm(t.customerName);
+    if (!map[k]) map[k] = { name:t.customerName, count:0 };
+    map[k].count++;
+  });
+  const all = Object.values(map);
+  const ini = n => n.split(' ').filter(Boolean).map(w=>w[0]).join('').toLowerCase();
+  const L1 = all.filter(c => c.name.toLowerCase().startsWith(q));
+  const L2 = all.filter(c => !L1.includes(c) && ini(c.name).startsWith(q));
+  const L3 = all.filter(c => !L1.includes(c) && !L2.includes(c) && c.name.toLowerCase().includes(q));
+  return [...L1,...L2,...L3].sort((a,b)=>b.count-a.count).slice(0,limit);
+}
+
+// ─── STYLE HELPERS (outside StyleSheet to avoid closure issues) ───────────────
+const btnStyle = (bg, fg='#fff') => ({
+  backgroundColor: bg, borderRadius: 16,
+  paddingVertical: 16, alignItems: 'center',
+  justifyContent: 'center', width: '100%',
+});
+const chipStyle = (active, color) => ({
+  paddingHorizontal: 16, paddingVertical: 9, borderRadius: 12,
+  backgroundColor: active ? (color || C.primary) : C.input,
+  marginRight: 8,
+});
+
+const st = StyleSheet.create({
+  flex1:   { flex: 1 },
+  container: { flex:1, backgroundColor:C.bg },
+  scroll:  { paddingHorizontal:14, paddingBottom:110 },
+  card:    { backgroundColor:C.card, borderRadius:16, borderWidth:1, borderColor:C.border, padding:16, marginBottom:12 },
+  input:   { backgroundColor:C.input, borderWidth:1.5, borderColor:C.border, borderRadius:12, padding:14, color:C.text, fontSize:16 },
+  label:   { color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:6 },
+  mono:    { fontFamily: Platform.OS==='ios' ? 'Courier New' : 'monospace' },
+  row:     { flexDirection:'row', alignItems:'center' },
+  sep:     { height:1, backgroundColor:C.border, marginVertical:8 },
+});
+
+// ─── REUSABLE COMPONENTS ──────────────────────────────────────────────────────
+const SalesChip = ({ name, active, color, onPress }) => (
+  <TouchableOpacity onPress={onPress} style={chipStyle(active, color)}>
+    <Text style={{ color: active ? '#fff' : C.muted, fontSize:14, fontWeight:'700' }}>
+      {name}
+    </Text>
+  </TouchableOpacity>
+);
+
+const KpiCard = ({ label, value, sub, color, style }) => (
+  <View style={[st.card, { padding:12, flex:1 }, style]}>
+    <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.7, textTransform:'uppercase', marginBottom:4 }}>
+      {label}
+    </Text>
+    <Text style={[st.mono, { color:color||C.text, fontSize:20, fontWeight:'800' }]}>
+      {value}
+    </Text>
+    {sub ? <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{sub}</Text> : null}
+  </View>
+);
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [name, setName] = useState('');
+  return (
+    <View style={{ flex:1, justifyContent:'center', alignItems:'center', padding:24, backgroundColor:C.bg }}>
+      <Text style={{ fontSize:60, marginBottom:16 }}>🧸</Text>
+      <Text style={{ color:C.text, fontSize:24, fontWeight:'800', marginBottom:8 }}>
+        Tracker Omset
+      </Text>
+      <Text style={{ color:C.muted, fontSize:14, marginBottom:28, textAlign:'center' }}>
+        Masukkan nama bisnis kamu
+      </Text>
+      <TextInput
+        value={name} onChangeText={setName}
+        placeholder="Contoh: Toko Maju Jaya" placeholderTextColor={C.muted}
+        style={[st.input, { width:'100%', maxWidth:320, textAlign:'center', fontSize:17 }]}
+        returnKeyType="done"
+        onSubmitEditing={() => name.trim() && onLogin(name.trim())}
+      />
+      <TouchableOpacity
+        onPress={() => name.trim() && onLogin(name.trim())}
+        style={[btnStyle(C.primary), { maxWidth:320, marginTop:14 }]}
+      >
+        <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>MASUK</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── SETUP WIZARD ─────────────────────────────────────────────────────────────
+function SetupWizard({ data, onComplete }) {
+  const [step, setStep]         = useState(1);
+  const [company, setCompany]   = useState(data?.companyName || '');
+  const [numS, setNumS]         = useState('2');
+  const [names, setNames]       = useState(['','']);
+  const [prefix, setPrefix]     = useState('INV');
+  const [sep, setSep]           = useState('-');
+  const [digits, setDigits]     = useState('5');
+  const [fmt, setFmt]           = useState('dd/mm/yyyy');
+
+  useEffect(() => {
+    const n = Math.min(20, Math.max(1, parseInt(numS)||1));
+    setNames(prev => {
+      const arr = [...prev];
+      while (arr.length < n) arr.push('');
+      return arr.slice(0, n);
+    });
+  }, [numS]);
+
+  const finish = () => {
+    const valid = names.filter(n => n.trim());
+    if (!company.trim()) { Alert.alert('','Isi nama bisnis dulu'); return; }
+    if (!valid.length)   { Alert.alert('','Minimal 1 sales'); return; }
+    onComplete({
+      companyName: company.trim(),
+      salesList:   valid.map(s => s.toUpperCase()),
+      bonConfig:   { prefix: prefix.toUpperCase(), separator: sep, digitLength: Math.max(1, parseInt(digits)||5) },
+      dateFormat:  fmt,
+    });
+  };
+
+  const Steps = [null,
+    // Step 1: company
+    <View key={1}>
+      <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:8 }}>Nama Bisnis</Text>
+      <TextInput value={company} onChangeText={setCompany}
+        placeholder="Toko Mainan Ceria" placeholderTextColor={C.muted} style={st.input} />
+    </View>,
+    // Step 2: num sales
+    <View key={2}>
+      <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:8 }}>Jumlah Sales</Text>
+      <TextInput value={numS} onChangeText={v => setNumS(v.replace(/\D/g,''))}
+        keyboardType="number-pad" style={[st.input, {width:100}]} />
+    </View>,
+    // Step 3: sales names
+    <View key={3}>
+      <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:8 }}>Nama Sales</Text>
+      {names.map((n,i) => (
+        <TextInput key={i} value={n}
+          onChangeText={v => { const a=[...names]; a[i]=v.toUpperCase(); setNames(a); }}
+          placeholder={`Sales ${i+1}`} placeholderTextColor={C.muted}
+          style={[st.input, {marginBottom:8}]} />
+      ))}
+    </View>,
+    // Step 4: bon format
+    <View key={4}>
+      <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:8 }}>Format Nomor Bon</Text>
+      <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
+        <View style={{ flex:1 }}>
+          <Text style={st.label}>Prefix</Text>
+          <TextInput value={prefix} onChangeText={v=>setPrefix(v.toUpperCase())} style={st.input} placeholderTextColor={C.muted}/>
+        </View>
+        <View style={{ width:60 }}>
+          <Text style={st.label}>Sep.</Text>
+          <TextInput value={sep} onChangeText={setSep} style={st.input} placeholderTextColor={C.muted}/>
+        </View>
+        <View style={{ width:60 }}>
+          <Text style={st.label}>Digit</Text>
+          <TextInput value={digits} onChangeText={v=>setDigits(v.replace(/\D/g,''))}
+            keyboardType="number-pad" style={st.input} placeholderTextColor={C.muted}/>
+        </View>
+      </View>
+      <Text style={[st.mono, { color:C.accent, fontSize:18, fontWeight:'800' }]}>
+        {prefix}{sep}{padNum(1, parseInt(digits)||5)}
+      </Text>
+    </View>,
+    // Step 5: date format
+    <View key={5}>
+      <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:12 }}>Format Tanggal</Text>
+      {['dd/mm/yyyy','mm/dd/yyyy','yyyy/mm/dd'].map(f => (
+        <TouchableOpacity key={f} onPress={() => setFmt(f)}
+          style={[st.card, { flexDirection:'row', justifyContent:'space-between', marginBottom:8 }]}>
+          <Text style={{ color:C.text, fontSize:14 }}>{f.toUpperCase()}</Text>
+          {fmt===f && <Text style={{ color:C.success }}>✓</Text>}
+        </TouchableOpacity>
+      ))}
+    </View>,
+  ];
+
+  return (
+    <KeyboardAvoidingView style={st.flex1} behavior={Platform.OS==='ios'?'padding':undefined}>
+      <ScrollView style={st.container} contentContainerStyle={{ padding:20 }}>
+        <Text style={{ color:C.muted, fontSize:12, fontWeight:'700', marginBottom:16 }}>
+          LANGKAH {step} / 5
+        </Text>
+        {Steps[step]}
+        <View style={{ flexDirection:'row', gap:10, marginTop:20, marginBottom:40 }}>
+          {step>1 && (
+            <TouchableOpacity onPress={() => setStep(step-1)}
+              style={[btnStyle(C.input), {flex:1}]}>
+              <Text style={{ color:C.text, fontSize:15, fontWeight:'700' }}>Kembali</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => step<5 ? setStep(step+1) : finish()}
+            style={[btnStyle(C.primary), {flex:2}]}>
+            <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>
+              {step<5 ? 'Lanjut →' : '🚀 Mulai'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+// ─── INPUT SCREEN ─────────────────────────────────────────────────────────────
+function InputScreen({ data, onSave }) {
+  const { salesList, transactions, lastSales, lastDate, nextSeq, bonConfig, dateFormat } = data;
+
+  const [sales, setSales]         = useState(lastSales || salesList[0] || '');
+  const [customer, setCustomer]   = useState('');
+  const [amount, setAmount]       = useState('');
+  const [date, setDate]           = useState(lastDate || todayStr());
+  const [notes, setNotes]         = useState('');
+  const [bonNo, setBonNo]         = useState(() => genBon(nextSeq, bonConfig));
+  const [bonEditing, setBonEditing] = useState(false);
+  const [bonOverride, setBonOverride] = useState(false);
+  const [saving, setSaving]       = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const amtRef = useRef(null);
+
+  useEffect(() => {
+    if (!bonOverride) setBonNo(genBon(nextSeq, bonConfig));
+  }, [nextSeq, bonConfig, bonOverride]);
+
+  const suggests = useMemo(
+    () => getAutocomplete(customer, transactions, sales),
+    [customer, transactions, sales]
+  );
+
+  const handleSave = async () => {
+    const cleanAmt = parseInt(amount.replace(/\D/g,'')) || 0;
+    if (!customer.trim() || cleanAmt <= 0 || saving) return;
+    setSaving(true);
+    const tx = {
+      bonNumber: bonNo,
+      nextSeq,
+      sales,
+      customerName: customer.trim(),
+      amount: cleanAmt,
+      date,
+      notes: notes.trim(),
+    };
+    await onSave(tx);
+    setJustSaved(true);
+    setCustomer('');
+    setAmount('');
+    setNotes('');
+    setBonOverride(false);
+    setBonEditing(false);
+    setSaving(false);
+    setTimeout(() => setJustSaved(false), 1500);
+    setTimeout(() => amtRef.current?.focus(), 100);
+  };
+
+  const salesColor = COLORS[salesList.indexOf(sales) % COLORS.length];
+  const amtNum = parseInt(amount.replace(/\D/g,'')) || 0;
+  const canSave = customer.trim().length > 0 && amtNum > 0;
+
+  return (
+    <KeyboardAvoidingView style={st.flex1} behavior={Platform.OS==='ios'?'padding':undefined}>
+      <ScrollView style={st.container} contentContainerStyle={st.scroll}
+        keyboardShouldPersistTaps="handled">
+
+        {/* Bon number */}
+        <TouchableOpacity onPress={() => setBonEditing(true)}
+          style={[st.card, { alignItems:'center', paddingVertical:14 }]}>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1, textTransform:'uppercase', marginBottom:4 }}>
+            NO. BON  (tap untuk edit)
+          </Text>
+          {bonEditing ? (
+            <TextInput value={bonNo}
+              onChangeText={v => { setBonNo(v); setBonOverride(true); }}
+              onBlur={() => setBonEditing(false)} autoFocus
+              style={[st.mono, { textAlign:'center', fontSize:26, fontWeight:'800', color:C.accent, borderBottomWidth:2, borderBottomColor:C.accent, minWidth:200, paddingVertical:4 }]}
+            />
+          ) : (
+            <Text style={[st.mono, { color:C.accent, fontSize:32, fontWeight:'800', letterSpacing:1.5 }]}>
+              {bonNo}
+              {bonOverride && <Text style={{ color:C.muted, fontSize:11 }}> *edited</Text>}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        {/* Date */}
+        <View style={{ marginBottom:14 }}>
+          <Text style={st.label}>📅 Tanggal</Text>
+          <TextInput value={date} onChangeText={setDate}
+            placeholder="YYYY-MM-DD" placeholderTextColor={C.muted} style={st.input} />
+          <Text style={{ color:C.muted, fontSize:11, marginTop:4 }}>
+            {fmtDate(date, dateFormat)}
+          </Text>
+        </View>
+
+        {/* Sales */}
+        <View style={{ marginBottom:14 }}>
+          <Text style={st.label}>Sales</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {salesList.map((sl, i) => (
+              <SalesChip key={sl} name={sl} active={sales===sl}
+                color={COLORS[i%COLORS.length]} onPress={() => setSales(sl)} />
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Customer + autocomplete */}
+        <View style={{ marginBottom:14 }}>
+          <Text style={st.label}>Nama Pelanggan ({sales})</Text>
+          <TextInput value={customer} onChangeText={setCustomer}
+            placeholder={`Pelanggan ${sales}...`} placeholderTextColor={C.muted}
+            style={[st.input, customer && { borderColor:salesColor }]}
+            autoCorrect={false} autoCapitalize="words" />
+          {suggests.length > 0 && (
+            <View style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.primary, borderTopWidth:0, borderBottomLeftRadius:12, borderBottomRightRadius:12, overflow:'hidden' }}>
+              {suggests.map(sg => (
+                <TouchableOpacity key={sg.name} onPress={() => setCustomer(sg.name)}
+                  style={{ padding:12, borderBottomWidth:1, borderBottomColor:C.border }}>
+                  <View style={{ flexDirection:'row', justifyContent:'space-between' }}>
+                    <Text style={{ color:C.text, fontSize:14 }}>{sg.name}</Text>
+                    <Text style={{ color:C.muted, fontSize:11 }}>{sg.count}x bon</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Amount */}
+        <View style={{ marginBottom:14 }}>
+          <Text style={st.label}>Total Belanja (Rp)</Text>
+          <TextInput ref={amtRef}
+            value={amount} onChangeText={v => setAmount(v.replace(/\D/g,''))}
+            keyboardType="number-pad" placeholder="0" placeholderTextColor={C.muted}
+            style={[st.input, st.mono, { fontSize:24, fontWeight:'800' }, amtNum>0 && { borderColor:C.accent }]}
+          />
+          {amtNum > 0 && (
+            <Text style={[st.mono, { color:C.accent, fontSize:13, marginTop:5 }]}>
+              {toIdr(amtNum)}
+            </Text>
+          )}
+        </View>
+
+        {/* Notes */}
+        <View style={{ marginBottom:22 }}>
+          <Text style={st.label}>Catatan (opsional)</Text>
+          <TextInput value={notes} onChangeText={setNotes}
+            placeholder="..." placeholderTextColor={C.muted} style={st.input} />
+        </View>
+
+        {/* Save */}
+        <TouchableOpacity onPress={handleSave} disabled={!canSave || saving}
+          style={[btnStyle(justSaved ? C.success : canSave ? salesColor : C.input), !canSave && { opacity:0.4 }]}>
+          <Text style={{ color: canSave ? '#fff' : C.muted, fontSize:16, fontWeight:'800' }}>
+            {saving ? 'Menyimpan...' : justSaved ? '✓  TERSIMPAN!' : 'SIMPAN BON →'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function DashboardScreen({ data, onYearChange }) {
+  const { salesList, transactions, activeYear, dateFormat } = data;
+
+  const activeTxns = useMemo(() =>
+    transactions.filter(t => !t.deletedAt), [transactions]);
+
+  const today  = todayStr();
+  const { mon, sun } = getWeekBounds(today);
+
+  const todayTxns = activeTxns.filter(t => t.date === today);
+  const weekTxns  = activeTxns.filter(t => t.date >= mon && t.date <= sun);
+  const yearTxns  = activeTxns.filter(t => t.date.startsWith(String(activeYear)));
+
+  const yearTotal = yearTxns.reduce((a,t) => a+t.amount, 0);
+  const yearCount = yearTxns.length;
+  const todayTotal = todayTxns.reduce((a,t) => a+t.amount, 0);
+  const weekTotal  = weekTxns.reduce((a,t) => a+t.amount, 0);
+
+  const bySales = salesList.map((s,i) => {
+    const sTx = yearTxns.filter(t => t.sales===s);
+    return { name:s, total:sTx.reduce((a,t)=>a+t.amount,0), count:sTx.length, color:COLORS[i%COLORS.length] };
+  });
+
+  const monthly = MONTHS.map((m,i) => {
+    const mo = String(i+1).padStart(2,'0');
+    const mTx = yearTxns.filter(t => t.date.slice(5,7)===mo);
+    const totals = {};
+    salesList.forEach(s => {
+      totals[s] = mTx.filter(t=>t.sales===s).reduce((a,t)=>a+t.amount,0);
+    });
+    return { name:m, ...totals, total:mTx.reduce((a,t)=>a+t.amount,0) };
+  });
+
+  // Build chart datasets for react-native-chart-kit
+  const chartData = {
+    labels: monthly.map(m => m.name.slice(0,3)),
+    datasets: salesList.length>0 ? salesList.map((s,i) => ({
+      data: monthly.map(m => (m[s]||0) / (yearTotal||1) * 100), // % for display
+      color: (opacity=1) => COLORS[i%COLORS.length] + Math.round(opacity*255).toString(16).padStart(2,'0'),
+    })) : [{ data: monthly.map(m => m.total || 0), color: (o=1) => C.primary }],
+  };
+
+  return (
+    <ScrollView style={st.container} contentContainerStyle={st.scroll}>
+      {/* Year */}
+      <View style={[st.card, { flexDirection:'row', alignItems:'center', justifyContent:'center', gap:24 }]}>
+        <TouchableOpacity onPress={() => onYearChange(activeYear-1)}
+          style={{ backgroundColor:C.input, borderRadius:10, padding:10 }}>
+          <Text style={{ color:C.text, fontSize:20 }}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ alignItems:'center' }}>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1 }}>TAHUN</Text>
+          <Text style={[st.mono, { color:C.accent, fontSize:34, fontWeight:'800' }]}>
+            {activeYear}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => onYearChange(activeYear+1)}
+          style={{ backgroundColor:C.input, borderRadius:10, padding:10 }}>
+          <Text style={{ color:C.text, fontSize:20 }}>›</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Today + Week */}
+      <View style={[st.card, { borderLeftWidth:3, borderLeftColor:C.accent }]}>
+        <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:8 }}>
+          <View>
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase' }}>
+              HARI INI · {fmtDate(today, dateFormat)}
+            </Text>
+            <Text style={[st.mono, { color:C.text, fontSize:20, fontWeight:'800' }]}>
+              {toIdr(todayTotal)}
+            </Text>
+            <Text style={{ color:C.muted, fontSize:12 }}>{todayTxns.length} bon</Text>
+          </View>
+          <View style={{ alignItems:'flex-end' }}>
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase' }}>MINGGU INI</Text>
+            <Text style={[st.mono, { color:C.text, fontSize:18, fontWeight:'800' }]}>
+              {toShort(weekTotal)}
+            </Text>
+            <Text style={{ color:C.muted, fontSize:12 }}>{weekTxns.length} bon</Text>
+          </View>
+        </View>
+        {salesList.map(sl => {
+          const sT = todayTxns.filter(t=>t.sales===sl);
+          return sT.length ? (
+            <Text key={sl} style={{ color:C.muted, fontSize:12, marginTop:2 }}>
+              {sl}: {toIdr(sT.reduce((a,t)=>a+t.amount,0))} ({sT.length})
+            </Text>
+          ) : null;
+        })}
+      </View>
+
+      {/* KPIs */}
+      <View style={{ flexDirection:'row', gap:8, marginBottom:12 }}>
+        <KpiCard label="Total Omset" value={toShort(yearTotal)} sub={yearCount+' bon'} color={C.accent} />
+        <KpiCard label="Rata-rata"   value={toShort(yearCount>0?Math.round(yearTotal/yearCount):0)} sub="per bon" />
+      </View>
+
+      {/* Per-sales breakdown */}
+      <View style={st.card}>
+        <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+          OMSET PER SALES {activeYear}
+        </Text>
+        {bySales.map(bs => (
+          <View key={bs.name} style={{ marginBottom:10 }}>
+            <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:4 }}>
+              <Text style={{ color:C.text, fontWeight:'700', fontSize:13 }}>{bs.name}</Text>
+              <Text style={[st.mono, { color:bs.color, fontWeight:'700', fontSize:13 }]}>
+                {toIdr(bs.total)}
+              </Text>
+            </View>
+            <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
+              <View style={{ flex:1, backgroundColor:C.input, borderRadius:4, height:6, overflow:'hidden' }}>
+                <View style={{ backgroundColor:bs.color, height:6, borderRadius:4, width: yearTotal>0 ? `${Math.round(bs.total/yearTotal*100)}%` : '0%' }} />
+              </View>
+              <Text style={{ color:C.muted, fontSize:11, minWidth:30, textAlign:'right' }}>
+                {yearTotal>0 ? Math.round(bs.total/yearTotal*100) : 0}%
+              </Text>
+            </View>
+            <Text style={{ color:C.muted, fontSize:11 }}>{bs.count} bon</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Monthly bar chart */}
+      {yearTotal > 0 && (
+        <View style={st.card}>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+            GRAFIK BULANAN {activeYear}
+          </Text>
+          {/* Custom simple bar chart to avoid react-native-chart-kit issues */}
+          <View style={{ flexDirection:'row', alignItems:'flex-end', height:80, gap:3 }}>
+            {monthly.map((m, i) => {
+              const h = monthly.reduce((max,x) => Math.max(max,x.total),0);
+              const pct = h > 0 ? Math.max(m.total/h, m.total>0?0.04:0.02) : 0.02;
+              return (
+                <View key={i} style={{ flex:1, alignItems:'center' }}>
+                  <View style={{ backgroundColor: m.total>0 ? C.primary : C.border, borderRadius:3, height: `${pct*100}%`, width:'100%' }} />
+                  <Text style={{ color:C.muted, fontSize:8, marginTop:3 }}>{m.name}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+// ─── HISTORY ─────────────────────────────────────────────────────────────────
+function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
+  const { salesList, transactions, dateFormat } = data;
+  const [search, setSearch]   = useState('');
+  const [salesF, setSalesF]   = useState('ALL');
+  const [editTx, setEditTx]   = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return [...transactions]
+      .sort((a,b) => b.id - a.id)
+      .filter(t => salesF==='ALL' || t.sales===salesF)
+      .filter(t =>
+        !q ||
+        t.customerName.toLowerCase().includes(q) ||
+        (t.bonNumber||'').toLowerCase().includes(q)
+      );
+  }, [transactions, salesF, search]);
+
+  const openEdit = (tx) => {
+    setEditForm({
+      bonNumber:    tx.bonNumber,
+      sales:        tx.sales,
+      customerName: tx.customerName,
+      amount:       String(tx.amount),
+      date:         tx.date,
+      notes:        tx.notes,
+    });
+    setEditTx(tx);
+  };
+
+  const saveEdit = async () => {
+    const amt = parseInt(editForm.amount.replace(/\D/g,''))||0;
+    if (!editForm.customerName.trim() || amt<=0) {
+      Alert.alert('','Nama dan nominal harus diisi'); return;
+    }
+    await onEdit(editTx.id, { ...editForm, amount: amt });
+    setEditTx(null);
+  };
+
+  const confirmDelete = (tx) => {
+    Alert.alert(
+      'Hapus Transaksi',
+      `Bon ${tx.bonNumber} · ${tx.customerName} · ${toIdr(tx.amount)}`,
+      [
+        { text:'Batal', style:'cancel' },
+        { text:'Hapus', style:'destructive', onPress: () => onDelete(tx.id) },
+      ]
+    );
+  };
+
+  const renderItem = ({ item: tx }) => {
+    const isDeleted  = !!tx.deletedAt;
+    const salesColor = COLORS[salesList.indexOf(tx.sales) % COLORS.length] || C.primary;
+    return (
+      <View style={[st.card, { borderLeftWidth:4, borderLeftColor: isDeleted ? C.muted : salesColor, opacity: isDeleted ? 0.6 : 1 }]}>
+        <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:6 }}>
+          <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
+            <Text style={[st.mono, { color:C.muted, fontSize:11 }]}>#{tx.bonNumber||'?'}</Text>
+            <View style={{ backgroundColor:salesColor+'22', paddingHorizontal:8, paddingVertical:2, borderRadius:6 }}>
+              <Text style={{ color:salesColor, fontSize:10, fontWeight:'700' }}>{tx.sales}</Text>
+            </View>
+            {isDeleted && <Text style={{ color:C.muted, fontSize:10, fontStyle:'italic' }}>dihapus</Text>}
+          </View>
+          {isDeleted ? (
+            <TouchableOpacity onPress={() => onRestore(tx.id)}
+              style={{ backgroundColor:C.success+'22', borderRadius:8, paddingHorizontal:10, paddingVertical:4 }}>
+              <Text style={{ color:C.success, fontSize:11, fontWeight:'700' }}>↩ Pulihkan</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ flexDirection:'row', gap:8 }}>
+              <TouchableOpacity onPress={() => openEdit(tx)}
+                style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:8, paddingVertical:4 }}>
+                <Text style={{ color:C.muted, fontSize:13 }}>✎</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => confirmDelete(tx)}
+                style={{ backgroundColor:'transparent', paddingHorizontal:4, paddingVertical:4 }}>
+                <Text style={{ color:'#334155', fontSize:16 }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+        <Text style={{ color:C.text, fontSize:15, fontWeight:'700' }}>{tx.customerName}</Text>
+        {tx.notes ? <Text style={{ color:C.muted, fontSize:12 }}>{tx.notes}</Text> : null}
+        <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:8 }}>
+          <Text style={{ color:C.muted, fontSize:12 }}>{fmtDate(tx.date, dateFormat)}</Text>
+          <Text style={[st.mono, { color:C.accent, fontSize:16, fontWeight:'800' }]}>
+            {toIdr(tx.amount)}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <View style={st.flex1}>
+      {/* Search + filter */}
+      <View style={{ padding:14, paddingBottom:0 }}>
+        <TextInput value={search} onChangeText={setSearch}
+          placeholder="🔍  Cari nama / no. bon..." placeholderTextColor={C.muted}
+          style={[st.input, { marginBottom:10, fontSize:14 }]} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
+          {['ALL', ...salesList].map((sl, i) => (
+            <TouchableOpacity key={sl} onPress={() => setSalesF(sl)}
+              style={chipStyle(salesF===sl, i===0?C.accent:COLORS[(i-1)%COLORS.length])}>
+              <Text style={{ color:salesF===sl?'#fff':C.muted, fontSize:12, fontWeight:'700' }}>
+                {sl}
+              </Text>
+            </TouchableOpacity>
+          ))}
+          <Text style={{ color:C.muted, fontSize:12, alignSelf:'center', marginLeft:8 }}>
+            {filtered.length} bon
+          </Text>
+        </ScrollView>
+      </View>
+
+      <FlatList data={filtered} renderItem={renderItem} keyExtractor={i => String(i.id)}
+        contentContainerStyle={{ padding:14, paddingBottom:110 }}
+        ListEmptyComponent={
+          <View style={{ alignItems:'center', paddingVertical:60 }}>
+            <Text style={{ fontSize:40, marginBottom:12 }}>📋</Text>
+            <Text style={{ color:C.muted, fontSize:14 }}>Tidak ada data</Text>
+          </View>
+        }
+      />
+
+      {/* Edit Modal */}
+      <Modal visible={!!editTx} animationType="slide" transparent>
+        <View style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.6)' }}>
+          <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined}>
+            <ScrollView style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, maxHeight:'85%' }}>
+              <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:16 }}>
+                ✎  Edit Transaksi
+              </Text>
+              {[
+                ['Nomor Bon','bonNumber','default'],
+                ['Nama Pelanggan','customerName','words'],
+                ['Nominal (Rp)','amount','number-pad'],
+                ['Tanggal (YYYY-MM-DD)','date','numbers-and-punctuation'],
+                ['Catatan','notes','default'],
+              ].map(([lbl,key,kb]) => (
+                <View key={key} style={{ marginBottom:14 }}>
+                  <Text style={st.label}>{lbl}</Text>
+                  <TextInput
+                    value={editForm[key]||''}
+                    onChangeText={v => setEditForm(f=>({...f,[key]:v}))}
+                    keyboardType={kb} placeholderTextColor={C.muted} style={st.input}
+                  />
+                </View>
+              ))}
+              {/* Sales selector */}
+              <View style={{ marginBottom:16 }}>
+                <Text style={st.label}>Sales</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {salesList.map((sl,i) => (
+                    <SalesChip key={sl} name={sl} active={editForm.sales===sl}
+                      color={COLORS[i%COLORS.length]}
+                      onPress={() => setEditForm(f=>({...f,sales:sl}))} />
+                  ))}
+                </ScrollView>
+              </View>
+              <View style={{ flexDirection:'row', gap:10, marginBottom:30 }}>
+                <TouchableOpacity onPress={() => setEditTx(null)}
+                  style={[btnStyle(C.input), {flex:1}]}>
+                  <Text style={{ color:C.muted, fontSize:15, fontWeight:'700' }}>Batal</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={saveEdit}
+                  style={[btnStyle(C.primary), {flex:2}]}>
+                  <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>Simpan</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+// ─── RANKING ──────────────────────────────────────────────────────────────────
+function RankingScreen({ data }) {
+  const { salesList, transactions, dateFormat } = data;
+  const [activeSales, setActiveSales] = useState(salesList[0]||'');
+  const [period, setPeriod]           = useState('year');
+  const [rankYear, setRankYear]       = useState(new Date().getFullYear());
+  const [rankMonth, setRankMonth]     = useState(new Date().getMonth()+1);
+
+  const activeTxns = useMemo(() =>
+    transactions.filter(t => !t.deletedAt), [transactions]);
+
+  const ranked = useMemo(() => {
+    const filtered = filterByPeriod(activeTxns, period, rankYear, rankMonth);
+    return getRanking(filtered, activeSales);
+  }, [activeTxns, activeSales, period, rankYear, rankMonth]);
+
+  const salesColor = COLORS[salesList.indexOf(activeSales) % COLORS.length] || C.primary;
+  const medals = ['🥇','🥈','🥉'];
+
+  const periodLabel = () => {
+    if (period==='today') return `Hari Ini, ${fmtDate(todayStr(), dateFormat)}`;
+    if (period==='week') {
+      const { mon, sun } = getWeekBounds(todayStr());
+      return `${fmtDate(mon,dateFormat)} – ${fmtDate(sun,dateFormat)}`;
+    }
+    if (period==='month') return `${MONTHS_F[rankMonth-1]} ${rankYear}`;
+    return `Tahun ${rankYear}`;
+  };
+
+  return (
+    <ScrollView style={st.container} contentContainerStyle={st.scroll}>
+      {/* Header card */}
+      <View style={st.card}>
+        <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
+          RANKING PELANGGAN
+        </Text>
+
+        {/* Period selector */}
+        <View style={{ flexDirection:'row', gap:6, marginBottom:10 }}>
+          {[['today','Hari'],['week','Minggu'],['month','Bulan'],['year','Tahun']].map(([id,lbl]) => (
+            <TouchableOpacity key={id} onPress={() => setPeriod(id)}
+              style={{ flex:1, backgroundColor:period===id?C.accent:C.input, borderRadius:10, paddingVertical:8, alignItems:'center' }}>
+              <Text style={{ color:period===id?'#fff':C.muted, fontSize:12, fontWeight:'700' }}>{lbl}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Year/month navigation */}
+        {(period==='year'||period==='month') && (
+          <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:C.input, borderRadius:10, padding:8, marginBottom:10 }}>
+            <TouchableOpacity onPress={() => {
+              if (period==='month') {
+                if (rankMonth===1) { setRankMonth(12); setRankYear(y=>y-1); }
+                else setRankMonth(m=>m-1);
+              } else setRankYear(y=>y-1);
+            }} style={{ width:32, height:32, backgroundColor:C.card, borderRadius:8, alignItems:'center', justifyContent:'center' }}>
+              <Text style={{ color:C.text, fontSize:18 }}>‹</Text>
+            </TouchableOpacity>
+            <Text style={{ color:C.text, fontWeight:'800', fontSize:14 }}>{periodLabel()}</Text>
+            <TouchableOpacity onPress={() => {
+              if (period==='month') {
+                if (rankMonth===12) { setRankMonth(1); setRankYear(y=>y+1); }
+                else setRankMonth(m=>m+1);
+              } else setRankYear(y=>y+1);
+            }} style={{ width:32, height:32, backgroundColor:C.card, borderRadius:8, alignItems:'center', justifyContent:'center' }}>
+              <Text style={{ color:C.text, fontSize:18 }}>›</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Sales tabs */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {salesList.map((sl,i) => (
+            <SalesChip key={sl} name={sl} active={activeSales===sl}
+              color={COLORS[i%COLORS.length]} onPress={() => setActiveSales(sl)} />
+          ))}
+        </ScrollView>
+        <Text style={{ color:C.muted, fontSize:10, marginTop:8 }}>
+          Pelanggan dipisah per sales
+        </Text>
+      </View>
+
+      {ranked.length === 0 ? (
+        <View style={{ alignItems:'center', paddingVertical:48 }}>
+          <Text style={{ fontSize:40, marginBottom:12 }}>🏆</Text>
+          <Text style={{ color:C.muted, fontSize:14 }}>Belum ada data untuk periode ini</Text>
+        </View>
+      ) : (
+        <>
+          {/* Podium top 3 */}
+          {ranked.length >= 3 && (
+            <View style={{ flexDirection:'row', alignItems:'flex-end', gap:8, marginBottom:16 }}>
+              {[1,0,2].map(idx => {
+                const p = ranked[idx];
+                const h = [95,75,58][idx];
+                return (
+                  <View key={idx} style={{ flex:1, alignItems:'center' }}>
+                    <Text style={{ color:C.text, fontSize:11, fontWeight:'700', marginBottom:3 }} numberOfLines={1}>
+                      {medals[idx]} {p.name}
+                    </Text>
+                    <Text style={[st.mono, { color:C.accent, fontSize:11, fontWeight:'700', marginBottom:5 }]}>
+                      {toShort(p.total)}
+                    </Text>
+                    <View style={{ backgroundColor:salesColor, borderRadius:8, height:h, width:'100%', alignItems:'center', justifyContent:'center' }}>
+                      <Text style={{ fontSize:22 }}>{medals[idx]}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Full list */}
+          {ranked.map((r, i) => (
+            <View key={r.name+i} style={[st.card, { flexDirection:'row', gap:12, alignItems:'center', borderWidth:1, borderColor:i<3?salesColor+'44':C.border }]}>
+              <View style={{ width:34, height:34, borderRadius:10, alignItems:'center', justifyContent:'center',
+                backgroundColor: i===0?C.accent : i===1?'#475569' : i===2?'#92400e' : C.input }}>
+                <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>{i+1}</Text>
+              </View>
+              <View style={{ flex:1 }}>
+                <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }} numberOfLines={1}>
+                  {r.name}
+                </Text>
+                <Text style={{ color:C.muted, fontSize:11 }}>
+                  {r.count} bon · terakhir {fmtDate(r.last, dateFormat)}
+                </Text>
+              </View>
+              <Text style={[st.mono, { color:C.accent, fontSize:14, fontWeight:'800' }]}>
+                {toIdr(r.total)}
+              </Text>
+            </View>
+          ))}
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+// ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
+function SettingsModal({ data, onUpdate, onClose }) {
+  const { salesList, bonConfig, dateFormat, companyName } = data;
+  const [company, setCompany]   = useState(companyName||'');
+  const [prefix,  setPrefix]    = useState(bonConfig?.prefix||'INV');
+  const [sep,     setSep]       = useState(bonConfig?.separator||'-');
+  const [digits,  setDigits]    = useState(String(bonConfig?.digitLength||5));
+  const [fmt,     setFmt]       = useState(dateFormat||'dd/mm/yyyy');
+  const [newSales, setNewSales] = useState('');
+
+  const save = async () => {
+    await onUpdate({
+      companyName:   company.trim(),
+      bonPrefix:     prefix.toUpperCase(),
+      bonSeparator:  sep,
+      bonDigits:     Math.max(1, parseInt(digits)||5),
+      dateFormat:    fmt,
+    });
+    onClose();
+  };
+
+  const handleAddSales = async () => {
+    const nm = newSales.trim().toUpperCase();
+    if (!nm || salesList.includes(nm)) {
+      Alert.alert('','Nama sudah ada atau kosong'); return;
+    }
+    await onUpdate({ addSales: nm });
+    setNewSales('');
+  };
+
+  const handleRemoveSales = (name) => {
+    Alert.alert('Hapus Sales',
+      `Hapus "${name}"? Transaksi lama tetap ada.`,
+      [
+        { text:'Batal', style:'cancel' },
+        { text:'Hapus', style:'destructive', onPress: () => onUpdate({ removeSales: name }) },
+      ]
+    );
+  };
+
+  const handleExport = async () => {
+    try {
+      const payload = {
+        schemaVersion: SCHEMA_VER,
+        appVersion:    APP_VER,
+        exportedAt:    new Date().toISOString(),
+        data,
+      };
+      const filename = `tracker-omset-${todayStr()}.json`;
+      const path = FileSystem.documentDirectory + filename;
+      await FileSystem.writeAsStringAsync(path, JSON.stringify(payload, null, 2));
+      await Sharing.shareAsync(path, { mimeType:'application/json', dialogTitle:'Export Tracker Omset' });
+    } catch(e) {
+      Alert.alert('Export Gagal', String(e));
+    }
+  };
+
+  const handleReset = () => {
+    Alert.alert('Reset Semua Data',
+      'Semua transaksi akan dihapus permanen. Settings tidak dihapus.',
+      [
+        { text:'Batal', style:'cancel' },
+        { text:'Hapus Semua', style:'destructive', onPress: () => onUpdate({ resetData: true }) },
+      ]
+    );
+  };
+
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View style={[st.container, { paddingTop: Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
+        <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:16, paddingVertical:12, borderBottomWidth:1, borderBottomColor:C.border }}>
+          <Text style={{ color:C.text, fontSize:18, fontWeight:'800' }}>⚙  Pengaturan</Text>
+          <TouchableOpacity onPress={onClose}
+            style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:12, paddingVertical:6 }}>
+            <Text style={{ color:C.muted }}>✕ Tutup</Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding:16, paddingBottom:50 }}>
+          {/* Company */}
+          <View style={st.card}>
+            <Text style={st.label}>Nama Bisnis</Text>
+            <TextInput value={company} onChangeText={setCompany}
+              placeholder="Nama bisnis..." placeholderTextColor={C.muted} style={st.input} />
+          </View>
+
+          {/* Sales management */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+              TIM SALES
+            </Text>
+            {salesList.map((sl, i) => (
+              <View key={sl} style={{ flexDirection:'row', alignItems:'center', gap:10, marginBottom:10 }}>
+                <View style={{ width:12, height:12, borderRadius:6, backgroundColor:COLORS[i%COLORS.length] }} />
+                <Text style={{ color:C.text, flex:1, fontSize:14, fontWeight:'600' }}>{sl}</Text>
+                {salesList.length > 1 && (
+                  <TouchableOpacity onPress={() => handleRemoveSales(sl)}
+                    style={{ backgroundColor:C.input, borderRadius:6, width:28, height:28, alignItems:'center', justifyContent:'center' }}>
+                    <Text style={{ color:C.muted }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+            <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
+              <TextInput value={newSales} onChangeText={v => setNewSales(v.toUpperCase())}
+                placeholder="Nama sales baru..." placeholderTextColor={C.muted}
+                style={[st.input, {flex:1}]} returnKeyType="done" onSubmitEditing={handleAddSales} />
+              <TouchableOpacity onPress={handleAddSales}
+                style={{ backgroundColor:C.primary, borderRadius:12, paddingHorizontal:18, alignItems:'center', justifyContent:'center' }}>
+                <Text style={{ color:'#fff', fontWeight:'800', fontSize:18 }}>+</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Bon format */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+              FORMAT NOMOR BON
+            </Text>
+            <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
+              <View style={{ flex:1 }}>
+                <Text style={st.label}>Prefix</Text>
+                <TextInput value={prefix} onChangeText={v=>setPrefix(v.toUpperCase())} style={st.input} placeholderTextColor={C.muted}/>
+              </View>
+              <View style={{ width:60 }}>
+                <Text style={st.label}>Sep.</Text>
+                <TextInput value={sep} onChangeText={setSep} style={st.input} placeholderTextColor={C.muted}/>
+              </View>
+              <View style={{ width:70 }}>
+                <Text style={st.label}>Digit</Text>
+                <TextInput value={digits} onChangeText={v=>setDigits(v.replace(/\D/g,''))}
+                  keyboardType="number-pad" style={st.input} placeholderTextColor={C.muted}/>
+              </View>
+            </View>
+            <Text style={[st.mono, { color:C.accent, fontSize:16, fontWeight:'800' }]}>
+              {prefix}{sep}{padNum(1, parseInt(digits)||5)}
+            </Text>
+          </View>
+
+          {/* Date format */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
+              FORMAT TANGGAL
+            </Text>
+            {['dd/mm/yyyy','mm/dd/yyyy','yyyy/mm/dd'].map(f => (
+              <TouchableOpacity key={f} onPress={() => setFmt(f)}
+                style={{ flexDirection:'row', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
+                <Text style={{ color:C.text, fontSize:14 }}>{f.toUpperCase()}</Text>
+                {fmt===f && <Text style={{ color:C.success }}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Data actions */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+              DATA
+            </Text>
+            <TouchableOpacity onPress={handleExport} style={[btnStyle(C.input), {marginBottom:10}]}>
+              <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>📤  Export Backup</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleReset} style={btnStyle(C.danger+'33')}>
+              <Text style={{ color:C.danger, fontSize:14, fontWeight:'700' }}>🗑  Reset Semua Data</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Save */}
+          <TouchableOpacity onPress={save} style={[btnStyle(C.success), {marginTop:4}]}>
+            <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>✓  Simpan Pengaturan</Text>
+          </TouchableOpacity>
+
+          <Text style={{ color:C.muted, fontSize:11, textAlign:'center', marginTop:16 }}>
+            Tracker Omset v{APP_VER}
+          </Text>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+const TABS = [
+  { id:'input',     icon:'✚', label:'Input'     },
+  { id:'dashboard', icon:'◈', label:'Dashboard' },
+  { id:'riwayat',   icon:'☰', label:'Riwayat'   },
+  { id:'ranking',   icon:'★', label:'Ranking'   },
+];
+
+export default function App() {
+  const [data,     setData]     = useState(null);
+  const [loading,  setLoading]  = useState(true);
+  const [dbReady,  setDbReady]  = useState(false);
+  const [tab,      setTab]      = useState('input');
+  const [showSett, setShowSett] = useState(false);
+  const [saveState,setSaveState]= useState('idle'); // 'idle'|'saving'|'saved'|'error'
+  const dbRef = useRef(null);
+
+  // Init DB + load data
+  useEffect(() => {
+    (async () => {
+      try {
+        await initDb();
+        dbRef.current = await getDb();
+        const loaded = await assembleData(dbRef.current);
+        setData(loaded || { isSetupComplete: false, salesList: [], transactions: [], companyName: '', bonConfig:{prefix:'INV',separator:'-',digitLength:5}, dateFormat:'dd/mm/yyyy', activeYear:new Date().getFullYear(), lastDate:todayStr(), lastSales:'', nextSeq:1 });
+        setDbReady(true);
+      } catch(e) {
+        Alert.alert('Database Error', String(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const reloadData = useCallback(async () => {
+    if (!dbRef.current) return;
+    const fresh = await assembleData(dbRef.current);
+    if (fresh) setData(fresh);
+  }, []);
+
+  // ─── handlers ──────────────────────────────────────────────
+  const handleSetupComplete = useCallback(async (setup) => {
+    setSaveState('saving');
+    try {
+      await setupBusiness(dbRef.current, setup);
+      await reloadData();
+      setSaveState('saved');
+    } catch(e) { setSaveState('error'); Alert.alert('Error', String(e)); }
+    setTimeout(() => setSaveState('idle'), 2000);
+  }, [reloadData]);
+
+  const handleSave = useCallback(async (tx) => {
+    setSaveState('saving');
+    try {
+      await insertTransaction(dbRef.current, tx);
+      await reloadData();
+      setSaveState('saved');
+    } catch(e) { setSaveState('error'); Alert.alert('Error', String(e)); }
+    setTimeout(() => setSaveState('idle'), 2000);
+  }, [reloadData]);
+
+  const handleDelete = useCallback(async (id) => {
+    await softDeleteTransaction(dbRef.current, id);
+    await reloadData();
+  }, [reloadData]);
+
+  const handleEdit = useCallback(async (id, fields) => {
+    await updateTransaction(dbRef.current, id, fields);
+    await reloadData();
+  }, [reloadData]);
+
+  const handleRestore = useCallback(async (id) => {
+    await restoreTransaction(dbRef.current, id);
+    await reloadData();
+  }, [reloadData]);
+
+  const handleYearChange = useCallback(async (year) => {
+    await updateSettings(dbRef.current, { activeYear: year });
+    await reloadData();
+  }, [reloadData]);
+
+  const handleSettingsUpdate = useCallback(async (fields) => {
+    const db = dbRef.current;
+    if (fields.addSales) {
+      await addSales(db, fields.addSales, null, data.salesList.length);
+    } else if (fields.removeSales) {
+      await deactivateSales(db, fields.removeSales);
+    } else if (fields.resetData) {
+      await db.runAsync('DELETE FROM transactions');
+      await db.runAsync('UPDATE settings SET current_seq=1 WHERE id=1');
+    } else {
+      await updateSettings(db, fields);
+    }
+    await reloadData();
+  }, [reloadData, data]);
+
+  // ─── render ────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
+        <Text style={{ fontSize:48, marginBottom:16 }}>🧸</Text>
+        <ActivityIndicator color={C.primary} size="large" />
+      </View>
+    );
+  }
+
+  if (!dbReady || !data) {
+    return (
+      <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
+        <Text style={{ color:C.danger }}>Database error — restart app</Text>
+      </View>
+    );
+  }
+
+  if (!data.isSetupComplete) {
+    return <SetupWizard data={data} onComplete={handleSetupComplete} />;
+  }
+
+  const statusText = saveState==='saving' ? 'Menyimpan...'
+    : saveState==='error'  ? 'Gagal simpan!'
+    : `${(data.transactions||[]).filter(t=>!t.deletedAt).length} bon · ${data.activeYear}`;
+  const statusColor = saveState==='saved' ? C.success
+    : saveState==='error' ? C.danger : C.muted;
+
+  return (
+    <View style={[st.flex1, { backgroundColor:C.bg, paddingTop:Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+
+      {/* Header */}
+      <View style={{ flexDirection:'row', alignItems:'center', paddingHorizontal:16, paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
+        <Text style={{ fontSize:22, marginRight:10 }}>🧸</Text>
+        <View style={{ flex:1 }}>
+          <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
+            {data.companyName || 'Tracker Omset'}
+          </Text>
+          <Text style={{ color:statusColor, fontSize:10 }}>{statusText}</Text>
+        </View>
+        <TouchableOpacity onPress={() => setShowSett(true)}
+          style={{ backgroundColor:C.input, borderRadius:10, padding:8 }}>
+          <Text style={{ fontSize:15 }}>⚙</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Screen */}
+      <View style={st.flex1}>
+        {tab==='input'     && <InputScreen data={data} onSave={handleSave} />}
+        {tab==='dashboard' && <DashboardScreen data={data} onYearChange={handleYearChange} />}
+        {tab==='riwayat'   && <HistoryScreen data={data} onDelete={handleDelete} onEdit={handleEdit} onRestore={handleRestore} />}
+        {tab==='ranking'   && <RankingScreen data={data} />}
+      </View>
+
+      {/* Bottom tabs */}
+      <View style={{ flexDirection:'row', backgroundColor:C.card, borderTopWidth:1, borderTopColor:C.border, paddingBottom: Platform.OS==='ios'?16:0 }}>
+        {TABS.map(t => (
+          <TouchableOpacity key={t.id} onPress={() => setTab(t.id)}
+            style={{ flex:1, alignItems:'center', paddingVertical:10 }}>
+            <Text style={{ fontSize:18, color:tab===t.id?C.accent:C.muted,
+              transform:[{scale: tab===t.id?1.2:1}] }}>{t.icon}</Text>
+            <Text style={{ fontSize:9, fontWeight:'700', color:tab===t.id?C.accent:C.muted, marginTop:2 }}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Settings */}
+      {showSett && (
+        <SettingsModal
+          data={data}
+          onUpdate={handleSettingsUpdate}
+          onClose={() => setShowSett(false)}
+        />
+      )}
+    </View>
+  );
+}

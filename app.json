@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Tracker Omset",
+    "slug": "tracker-omset",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#071018",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#071018"
+    },
+    "android": {
+      "package": "com.trackeromset.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#071018"
+      }
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-asset"
+    ]
+  }
+}
