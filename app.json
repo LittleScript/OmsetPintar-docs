@@ -1,19 +1,19 @@
 {
   "expo": {
-    "name": "CatatOmset",
-    "slug": "tracker-omset",
+    "name": "OmsetKu",
+    "slug": "omsetku",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#071018",
+    "backgroundColor": "#ffffff",
     "icon": "./assets/icon.png",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#071018"
+      "backgroundColor": "#ffffff"
     },
     "android": {
-      "package": "com.trackeromset.app",
+      "package": "com.omsetku.app",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -25,11 +25,11 @@
       "expo-asset",
       "@react-native-community/datetimepicker"
     ],
+    "owner": "aliangkoko",
     "extra": {
       "eas": {
-        "projectId": "1d46ebb3-7c26-4bce-9319-652e81462008"
+        "projectId": "27500f1c-6b40-4014-be88-463faa8d9ad0"
       }
-    },
-    "owner": "aliangkoko"
+    }
   }
 }

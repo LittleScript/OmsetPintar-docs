@@ -12,7 +12,7 @@
  *  - Soft delete with 24h undo in History
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext } from 'react';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
@@ -46,8 +46,24 @@ const APP_VER    = '1.0.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
-// C is now a function — call getC() or pass C from App via context
-// Default export for static uses (outside components)
+// ─── THEME CONTEXT ────────────────────────────────────────────────────────────
+const ThemeContext = createContext(DARK_THEME);
+
+// Dynamic styles — called inside each component with current C
+// Replaces StyleSheet.create (plain objects are fine for this app size)
+const getStyles = (C) => ({
+  flex1:     { flex: 1 },
+  container: { flex:1, backgroundColor:C.bg },
+  scroll:    { paddingHorizontal:14, paddingBottom:110 },
+  card:      { backgroundColor:C.card, borderRadius:16, borderWidth:1, borderColor:C.border, padding:16, marginBottom:12 },
+  input:     { backgroundColor:C.input, borderWidth:1.5, borderColor:C.border, borderRadius:12, padding:14, color:C.text, fontSize:16 },
+  label:     { color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:6 },
+  mono:      { fontFamily: Platform.OS==='ios' ? 'Courier New' : 'monospace' },
+  row:       { flexDirection:'row', alignItems:'center' },
+  sep:       { height:1, backgroundColor:C.border, marginVertical:8 },
+});
+
+// Module-level C reference (for non-component code only — analytics helpers etc.)
 let C = DARK_THEME;
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
@@ -239,7 +255,9 @@ async function insertTransaction(db, tx) {
   // BUG FIX 4: continuation from manual bon number
   // Extract last digit sequence from bon number, use max(nextSeq+1, parsedBon+1)
   const parsedBonSeq = parseInt((tx.bonNumber||'').match(/(\d+)$/)?.[1]||'0', 10)||0;
-  tx.nextSeqAfterSave = Math.max(tx.nextSeq + 1, parsedBonSeq + 1);
+  // FIX 3: When manual override (even to lower number), follow parsedBonSeq + 1
+  // Example: seq=50, user edits to 25 → next bon is 26 (not 51)
+  tx.nextSeqAfterSave = tx.bonManual ? parsedBonSeq + 1 : tx.nextSeq + 1;
 
   await db.runAsync(
     `INSERT INTO transactions
@@ -401,17 +419,7 @@ const chipStyle = (active, color) => ({
   marginRight: 8,
 });
 
-const st = StyleSheet.create({
-  flex1:   { flex: 1 },
-  container: { flex:1, backgroundColor:C.bg },
-  scroll:  { paddingHorizontal:14, paddingBottom:110 },
-  card:    { backgroundColor:C.card, borderRadius:16, borderWidth:1, borderColor:C.border, padding:16, marginBottom:12 },
-  input:   { backgroundColor:C.input, borderWidth:1.5, borderColor:C.border, borderRadius:12, padding:14, color:C.text, fontSize:16 },
-  label:   { color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:6 },
-  mono:    { fontFamily: Platform.OS==='ios' ? 'Courier New' : 'monospace' },
-  row:     { flexDirection:'row', alignItems:'center' },
-  sep:     { height:1, backgroundColor:C.border, marginVertical:8 },
-});
+// StyleSheet moved to getStyles(C) — called inside each component
 
 // ─── REUSABLE COMPONENTS ──────────────────────────────────────────────────────
 const SalesChip = ({ name, active, color, onPress }) => (
@@ -422,7 +430,10 @@ const SalesChip = ({ name, active, color, onPress }) => (
   </TouchableOpacity>
 );
 
-const KpiCard = ({ label, value, sub, color, style }) => (
+const KpiCard = ({ label, value, sub, color, style }) => {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+  return (
   <View style={[st.card, { padding:12, flex:1 }, style]}>
     <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.7, textTransform:'uppercase', marginBottom:4 }}>
       {label}
@@ -432,10 +443,14 @@ const KpiCard = ({ label, value, sub, color, style }) => (
     </Text>
     {sub ? <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{sub}</Text> : null}
   </View>
-);
+  );
+};
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+
   const [name, setName] = useState('');
   return (
     <View style={{ flex:1, justifyContent:'center', alignItems:'center', padding:24, backgroundColor:C.bg }}>
@@ -461,11 +476,15 @@ function LoginScreen({ onLogin }) {
         <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>MASUK</Text>
       </TouchableOpacity>
     </View>
+    </ThemeContext.Provider>
   );
 }
 
 // ─── SETUP WIZARD ─────────────────────────────────────────────────────────────
 function SetupWizard({ data, onComplete }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+
   const [step, setStep]         = useState(1);
   const [company, setCompany]   = useState(data?.companyName || '');
   const [numS, setNumS]         = useState('2');
@@ -515,7 +534,8 @@ function SetupWizard({ data, onComplete }) {
       {names.map((n,i) => (
         <TextInput key={i} value={n}
           onChangeText={v => { const a=[...names]; a[i]=v; setNames(a); }}
-          autoCapitalize="characters"
+          autoCorrect={false}
+          autoComplete="off"
           placeholder={`Sales ${i+1}`} placeholderTextColor={C.muted}
           style={[st.input, {marginBottom:8}]} />
       ))}
@@ -583,6 +603,9 @@ function SetupWizard({ data, onComplete }) {
 
 // ─── INPUT SCREEN ─────────────────────────────────────────────────────────────
 function InputScreen({ data, onSave }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+
   const { salesList, transactions, lastSales, lastDate, nextSeq, bonConfig, dateFormat } = data;
 
   const [sales, setSales]         = useState(lastSales || salesList[0] || '');
@@ -592,6 +615,7 @@ function InputScreen({ data, onSave }) {
   const [notes, setNotes]         = useState('');
   const [bonNo, setBonNo]         = useState(() => genBon(nextSeq, bonConfig));
   const [bonEditing, setBonEditing] = useState(false);
+  const [bonEditValue, setBonEditValue] = useState(''); // numeric only during edit
   const [bonOverride, setBonOverride] = useState(false);
   const [saving, setSaving]       = useState(false);
   const [justSaved, setJustSaved] = useState(false);
@@ -614,6 +638,7 @@ function InputScreen({ data, onSave }) {
     const tx = {
       bonNumber: bonNo,
       nextSeq,
+      bonManual: bonOverride,  // FIX 3: track manual edit for correct sequence
       sales,
       customerName: customer.trim(),
       amount: cleanAmt,
@@ -642,22 +667,46 @@ function InputScreen({ data, onSave }) {
         keyboardShouldPersistTaps="handled">
 
         {/* Bon number */}
-        <TouchableOpacity onPress={() => setBonEditing(true)}
+        <TouchableOpacity
+          onPress={() => {
+            // Extract only numeric part for editing
+            const numPart = (bonNo.match(/(\d+)$/) || ['1'])[0];
+            setBonEditValue(numPart.replace(/^0+/, '') || '1');
+            setBonEditing(true);
+          }}
           style={[st.card, { alignItems:'center', paddingVertical:14 }]}>
           <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1, textTransform:'uppercase', marginBottom:4 }}>
             NO. BON  (tap untuk edit)
           </Text>
           {bonEditing ? (
-            <TextInput value={bonNo}
-              onChangeText={v => {
-                // FIX 5: no letters — only digits and common bon separators (-, /, .)
-                const clean = v.replace(/[^0-9\-\/\.]/g, '');
-                setBonNo(clean); setBonOverride(true);
-              }}
-              onBlur={() => setBonEditing(false)} autoFocus
-              keyboardType="numbers-and-punctuation"
-              style={[st.mono, { textAlign:'center', fontSize:26, fontWeight:'800', color:C.accent, borderBottomWidth:2, borderBottomColor:C.accent, minWidth:200, paddingVertical:4 }]}
-            />
+            // Show prefix as static text + editable number only
+            <View style={{ flexDirection:'row', alignItems:'center', gap:2 }}>
+              {(bonConfig.prefix || bonConfig.separator) ? (
+                <Text style={[st.mono, { color:C.muted, fontSize:20, fontWeight:'700' }]}>
+                  {bonConfig.prefix}{bonConfig.separator}
+                </Text>
+              ) : null}
+              <TextInput
+                value={bonEditValue}
+                onChangeText={v => {
+                  const digits = v.replace(/\D/g, '');
+                  setBonEditValue(digits);
+                  setBonOverride(true);
+                }}
+                onBlur={() => {
+                  if (bonEditValue) {
+                    setBonNo(genBon(parseInt(bonEditValue, 10) || 1, bonConfig));
+                  }
+                  setBonEditing(false);
+                }}
+                autoFocus
+                keyboardType="number-pad"
+                maxLength={10}
+                style={[st.mono, { color:C.accent, fontSize:26, fontWeight:'800',
+                  borderBottomWidth:2, borderBottomColor:C.accent,
+                  minWidth:120, paddingVertical:4, textAlign:'center' }]}
+              />
+            </View>
           ) : (
             <Text style={[st.mono, { color:C.accent, fontSize:32, fontWeight:'800', letterSpacing:1.5 }]}>
               {bonNo}
@@ -762,6 +811,9 @@ function InputScreen({ data, onSave }) {
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function DashboardScreen({ data, onYearChange }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+
   const { salesList, transactions, activeYear, dateFormat } = data;
 
   const activeTxns = useMemo(() =>
@@ -793,6 +845,15 @@ function DashboardScreen({ data, onYearChange }) {
     });
     return { name:m, ...totals, total:mTx.reduce((a,t)=>a+t.amount,0) };
   });
+
+  // Build chart datasets for react-native-chart-kit
+  const chartData = {
+    labels: monthly.map(m => m.name.slice(0,3)),
+    datasets: salesList.length>0 ? salesList.map((s,i) => ({
+      data: monthly.map(m => (m[s]||0) / (yearTotal||1) * 100), // % for display
+      color: (opacity=1) => COLORS[i%COLORS.length] + Math.round(opacity*255).toString(16).padStart(2,'0'),
+    })) : [{ data: monthly.map(m => m.total || 0), color: (o=1) => C.primary }],
+  };
 
   return (
     <ScrollView style={st.container} contentContainerStyle={st.scroll}>
@@ -903,6 +964,9 @@ function DashboardScreen({ data, onYearChange }) {
 
 // ─── HISTORY ─────────────────────────────────────────────────────────────────
 function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+
   const { salesList, transactions, dateFormat } = data;
   const [search, setSearch]   = useState('');
   const [salesF, setSalesF]   = useState('ALL');
@@ -1083,6 +1147,9 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
 
 // ─── RANKING ──────────────────────────────────────────────────────────────────
 function RankingScreen({ data }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+
   const { salesList, transactions, dateFormat } = data;
   const [activeSales, setActiveSales] = useState(salesList[0]||'');
   const [period, setPeriod]           = useState('year');
@@ -1221,6 +1288,9 @@ function RankingScreen({ data }) {
 
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
 function SettingsModal({ data, onUpdate, onClose }) {
+  const C = useContext(ThemeContext);
+  const st = getStyles(C);
+
   const { salesList, bonConfig, dateFormat, companyName } = data;
   const [themeMode, setThemeMode]= useState(data.themeMode||'dark');
   const [company, setCompany]   = useState(companyName||'');
@@ -1406,7 +1476,10 @@ function SettingsModal({ data, onUpdate, onClose }) {
           </TouchableOpacity>
 
           <Text style={{ color:C.muted, fontSize:11, textAlign:'center', marginTop:16 }}>
-            Tracker Omset v{APP_VER}
+            OmsetKu v{APP_VER}
+          </Text>
+          <Text style={{ color:C.muted, fontSize:10, textAlign:'center', marginTop:4 }}>
+            by @Maelllai
           </Text>
         </ScrollView>
       </View>
@@ -1428,8 +1501,17 @@ export default function App() {
   const [dbReady,  setDbReady]  = useState(false);
   const [tab,      setTab]      = useState('input');
   const [showSett, setShowSett] = useState(false);
-  const [saveState,setSaveState]= useState('idle'); // 'idle'|'saving'|'saved'|'error'
+  const [saveState,setSaveState]= useState('idle');
   const systemScheme = useColorScheme();
+  const [themeMode, setThemeMode] = useState('dark');
+
+  const currentTheme = useMemo(() => {
+    const isDark = themeMode === 'system' ? (systemScheme !== 'light') : (themeMode === 'dark');
+    return isDark ? DARK_THEME : LIGHT_THEME;
+  }, [themeMode, systemScheme]);
+
+  // Keep module-level C in sync for non-component helpers
+  C = currentTheme;
   const dbRef = useRef(null);
 
   // Init DB + load data
@@ -1441,8 +1523,7 @@ export default function App() {
         const loaded = await assembleData(dbRef.current);
         // Apply saved theme
         const savedTheme = loaded?.themeMode || 'dark';
-        const isDark = savedTheme === 'system' ? (systemScheme !== 'light') : savedTheme === 'dark';
-        C = isDark ? DARK_THEME : LIGHT_THEME;
+        setThemeMode(savedTheme);
         setData(loaded || { isSetupComplete: false, salesList: [], transactions: [], companyName: '', bonConfig:{prefix:'INV',separator:'-',digitLength:5}, dateFormat:'dd/mm/yyyy', activeYear:new Date().getFullYear(), lastDate:todayStr(), lastSales:'', nextSeq:1 });
         setDbReady(true);
       } catch(e) {
@@ -1502,10 +1583,9 @@ export default function App() {
 
   const handleSettingsUpdate = useCallback(async (fields) => {
     const db = dbRef.current;
-    // Apply theme immediately if changed
+    // Update React theme state — ThemeContext.Provider will re-render all children
     if (fields.themeMode) {
-      const isDark = fields.themeMode === 'system' ? (systemScheme !== 'light') : fields.themeMode === 'dark';
-      C = isDark ? DARK_THEME : LIGHT_THEME;
+      setThemeMode(fields.themeMode);
     }
     if (fields.addSales) {
       await addSales(db, fields.addSales, null, data.salesList.length);
@@ -1550,7 +1630,8 @@ export default function App() {
     : saveState==='error' ? C.danger : C.muted;
 
   return (
-    <View style={[st.flex1, { backgroundColor:C.bg, paddingTop:Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
+    <ThemeContext.Provider value={currentTheme}>
+    <View style={[{flex:1, backgroundColor:currentTheme.bg}, { paddingTop:Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
 
       {/* Header */}
@@ -1559,7 +1640,7 @@ export default function App() {
           style={{ width:32, height:32, borderRadius:8, marginRight:10 }} />
         <View style={{ flex:1 }}>
           <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
-            {data.companyName || 'Tracker Omset'}
+            {data.companyName || 'OmsetKu'}
           </Text>
           <Text style={{ color:statusColor, fontSize:10 }}>{statusText}</Text>
         </View>
