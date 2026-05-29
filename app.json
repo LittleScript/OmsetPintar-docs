@@ -23,6 +23,12 @@
     "plugins": [
       "expo-sqlite",
       "expo-asset"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1d46ebb3-7c26-4bce-9319-652e81462008"
+      }
+    },
+    "owner": "aliangkoko"
   }
 }
