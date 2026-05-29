@@ -476,7 +476,6 @@ function LoginScreen({ onLogin }) {
         <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>MASUK</Text>
       </TouchableOpacity>
     </View>
-    </ThemeContext.Provider>
   );
 }
 
@@ -1681,5 +1680,6 @@ export default function App() {
         />
       )}
     </View>
+    </ThemeContext.Provider>
   );
 }
