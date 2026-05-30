@@ -27,6 +27,11 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import * as XLSX from 'xlsx';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
+import * as BackgroundFetch from 'expo-background-fetch';
+import * as TaskManager from 'expo-task-manager';
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -47,8 +52,86 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.8.0';
+const APP_VER    = '3.9.0';
 const SCHEMA_VER = 1;
+
+// ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
+// Isi dengan Web Client ID dari Google Cloud Console (lihat GOOGLE_DRIVE_SETUP.md)
+const GOOGLE_WEB_CLIENT_ID = 'GANTI_DENGAN_WEB_CLIENT_ID_DARI_GOOGLE_CLOUD';
+const GDRIVE_TOKEN_KEY      = 'gdrive_access_token';
+const GDRIVE_REFRESH_KEY    = 'gdrive_refresh_token';
+const GDRIVE_EMAIL_KEY      = 'gdrive_user_email';
+const GDRIVE_LAST_BACKUP_KEY= 'gdrive_last_backup';
+const GDRIVE_TASK_NAME      = 'OMSETKU_GDRIVE_BACKUP';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// Upload JSON backup ke Google Drive folder "OmsetKu Backup"
+async function uploadToDrive(accessToken, payload) {
+  // Cari folder OmsetKu Backup
+  const qFolder = encodeURIComponent(`name='OmsetKu Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${qFolder}&fields=files(id)`,
+    { headers: { Authorization: `Bearer ${accessToken}` } });
+  const folderData = await folderRes.json();
+  let folderId = folderData.files?.[0]?.id;
+
+  if (!folderId) {
+    const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'OmsetKu Backup', mimeType: 'application/vnd.google-apps.folder' }),
+    });
+    const crData = await cr.json();
+    folderId = crData.id;
+  }
+
+  const filename = `omsetku-backup-${todayStr()}.json`;
+  const content  = JSON.stringify(payload, null, 2);
+  const boundary = 'omsetku_boundary';
+  const body = [
+    `--${boundary}`,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify({ name: filename, parents: [folderId] }),
+    `--${boundary}`,
+    'Content-Type: application/json',
+    '',
+    content,
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  const uploadRes = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    }
+  );
+  if (!uploadRes.ok) throw new Error(`Drive upload failed: ${uploadRes.status}`);
+}
+
+// Background task — cek setiap 1 jam, backup jika sudah > 24 jam
+TaskManager.defineTask(GDRIVE_TASK_NAME, async () => {
+  try {
+    const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
+    if (!token) return BackgroundFetch.BackgroundFetchResult.NoData;
+    const last = await SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY);
+    if (last && Date.now() - parseInt(last) < 23 * 60 * 60 * 1000) {
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+    const db      = await getDb();
+    const appData = await assembleData(db);
+    await uploadToDrive(token, { schemaVersion: SCHEMA_VER, appVersion: APP_VER, exportedAt: new Date().toISOString(), data: appData });
+    await SecureStore.setItemAsync(GDRIVE_LAST_BACKUP_KEY, String(Date.now()));
+    return BackgroundFetch.BackgroundFetchResult.NewData;
+  } catch(e) {
+    return BackgroundFetch.BackgroundFetchResult.Failed;
+  }
+});
 const { width: SW } = Dimensions.get('window');
 
 // ─── THEME CONTEXT ────────────────────────────────────────────────────────────
@@ -794,11 +877,13 @@ function InputScreen({ data, onSave, dirtyRef }) {
       date,
       notes: notes.trim(),
     };
-    // Cek duplikat: tanggal + pelanggan + nominal identik
+    // Cek duplikat: bon number + pelanggan + nominal identik (tanpa cek tanggal)
     const norm = getNorm(customer.trim());
     const duplicate = transactions.find(t =>
-      !t.deletedAt && t.date === date &&
-      getNorm(t.customerName) === norm && t.amount === cleanAmt
+      !t.deletedAt &&
+      t.bonNumber === bonNo &&
+      getNorm(t.customerName) === norm &&
+      t.amount === cleanAmt
     );
     if (duplicate) {
       setSaving(false);
@@ -1750,7 +1835,8 @@ function RankingScreen({ data }) {
 }
 
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
-function SettingsModal({ data, onUpdate, onImport, onClose }) {
+function SettingsModal({ data, onUpdate, onImport, onClose,
+  driveEmail, driveLastSync, driveSyncing, onDriveConnect, onDriveBackup, onDriveDisconnect }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
 
@@ -2040,6 +2126,57 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
                 {fmt===f && <Text style={{ color:C.success }}>✓</Text>}
               </TouchableOpacity>
             ))}
+          </View>
+
+          {/* Google Drive Backup */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+              BACKUP GOOGLE DRIVE
+            </Text>
+            {driveEmail ? (
+              <>
+                <View style={{ flexDirection:'row', alignItems:'center', gap:10, marginBottom:12 }}>
+                  <View style={{ width:36, height:36, borderRadius:18, backgroundColor:C.success+'22', alignItems:'center', justifyContent:'center' }}>
+                    <Text style={{ fontSize:18 }}>☁️</Text>
+                  </View>
+                  <View style={{ flex:1 }}>
+                    <Text style={{ color:C.text, fontSize:13, fontWeight:'700' }}>{driveEmail}</Text>
+                    <Text style={{ color:C.muted, fontSize:11 }}>
+                      {driveLastSync ? `Terakhir: ${driveLastSync}` : 'Belum pernah backup'}
+                    </Text>
+                  </View>
+                  <View style={{ width:10, height:10, borderRadius:5, backgroundColor:C.success }} />
+                </View>
+                <TouchableOpacity onPress={onDriveBackup} disabled={driveSyncing}
+                  style={{ backgroundColor:C.success+'22', borderWidth:1.5, borderColor:C.success,
+                    borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8,
+                    opacity: driveSyncing ? 0.6 : 1 }}>
+                  <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>
+                    {driveSyncing ? '☁️ Mengunggah...' : '☁️ Backup Sekarang'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={onDriveDisconnect}
+                  style={{ backgroundColor:C.danger+'11', borderRadius:14, paddingVertical:10, alignItems:'center' }}>
+                  <Text style={{ color:C.danger, fontSize:12, fontWeight:'700' }}>Putus Koneksi</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={{ color:C.muted, fontSize:12, marginBottom:12 }}>
+                  Backup otomatis harian ke Google Drive. Data aman jika HP hilang atau rusak.
+                </Text>
+                <TouchableOpacity onPress={onDriveConnect}
+                  style={{ backgroundColor:'#4285F422', borderWidth:1.5, borderColor:'#4285F4',
+                    borderRadius:14, paddingVertical:14, alignItems:'center' }}>
+                  <Text style={{ color:'#4285F4', fontSize:14, fontWeight:'800' }}>
+                    🔗 Hubungkan Akun Google
+                  </Text>
+                </TouchableOpacity>
+                <Text style={{ color:C.muted, fontSize:10, textAlign:'center', marginTop:8 }}>
+                  Memerlukan koneksi internet saat setup
+                </Text>
+              </>
+            )}
           </View>
 
           {/* Data actions */}
@@ -2596,6 +2733,89 @@ export default function App() {
     if (fresh) setData(fresh);
   }, []);
 
+  // ── Google Drive Backup ─────────────────────────────────────
+  const [driveEmail,    setDriveEmail]    = useState('');
+  const [driveLastSync, setDriveLastSync] = useState('');
+  const [driveSyncing,  setDriveSyncing]  = useState(false);
+
+  const [gRequest, gResponse, gPromptAsync] = Google.useAuthRequest({
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    scopes: ['https://www.googleapis.com/auth/drive.file', 'email', 'profile'],
+  });
+
+  // Load stored drive state on startup
+  useEffect(() => {
+    (async () => {
+      const email = await SecureStore.getItemAsync(GDRIVE_EMAIL_KEY);
+      const last  = await SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY);
+      if (email) setDriveEmail(email);
+      if (last)  setDriveLastSync(new Date(parseInt(last)).toLocaleDateString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }));
+    })();
+  }, []);
+
+  // Handle OAuth response
+  useEffect(() => {
+    if (gResponse?.type === 'success') {
+      const { authentication } = gResponse;
+      (async () => {
+        try {
+          // Simpan token
+          await SecureStore.setItemAsync(GDRIVE_TOKEN_KEY, authentication.accessToken);
+          // Ambil email user
+          const infoRes = await fetch('https://www.googleapis.com/userinfo/v2/me', {
+            headers: { Authorization: `Bearer ${authentication.accessToken}` },
+          });
+          const info = await infoRes.json();
+          await SecureStore.setItemAsync(GDRIVE_EMAIL_KEY, info.email || '');
+          setDriveEmail(info.email || '');
+          // Register background task
+          await BackgroundFetch.registerTaskAsync(GDRIVE_TASK_NAME, {
+            minimumInterval: 60 * 60, // 1 jam
+            stopOnTerminate: false,
+            startOnBoot: true,
+          }).catch(() => {});
+          Alert.alert('✅ Google Drive Terhubung', `Backup otomatis aktif untuk:\n${info.email}`);
+        } catch(e) {
+          Alert.alert('Error', 'Gagal menyimpan token Drive: ' + String(e));
+        }
+      })();
+    }
+  }, [gResponse]);
+
+  const handleManualDriveBackup = async () => {
+    const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
+    if (!token) { Alert.alert('','Hubungkan Google Drive dulu di Settings'); return; }
+    try {
+      setDriveSyncing(true);
+      const db      = await getDb();
+      const appData = await assembleData(db);
+      await uploadToDrive(token, { schemaVersion: SCHEMA_VER, appVersion: APP_VER, exportedAt: new Date().toISOString(), data: appData });
+      await SecureStore.setItemAsync(GDRIVE_LAST_BACKUP_KEY, String(Date.now()));
+      const now = new Date().toLocaleDateString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+      setDriveLastSync(now);
+      Alert.alert('✅ Backup Berhasil', `Data tersimpan ke Google Drive\n${now}`);
+    } catch(e) {
+      Alert.alert('Backup Gagal', String(e));
+    } finally {
+      setDriveSyncing(false);
+    }
+  };
+
+  const handleDisconnectDrive = () => {
+    Alert.alert('Putus Google Drive?', 'Backup otomatis akan berhenti.',
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Putuskan', style: 'destructive', onPress: async () => {
+          await SecureStore.deleteItemAsync(GDRIVE_TOKEN_KEY);
+          await SecureStore.deleteItemAsync(GDRIVE_EMAIL_KEY);
+          await BackgroundFetch.unregisterTaskAsync(GDRIVE_TASK_NAME).catch(() => {});
+          setDriveEmail('');
+          setDriveLastSync('');
+        }},
+      ]
+    );
+  };
+
   // ── PIN Lock / Fingerprint ──────────────────────────────────
   const [isLocked, setIsLocked]     = useState(false);
   const pinInitialized              = useRef(false);
@@ -2869,6 +3089,12 @@ export default function App() {
           onUpdate={handleSettingsUpdate}
           onImport={handleImportCsv}
           onClose={() => setShowSett(false)}
+          driveEmail={driveEmail}
+          driveLastSync={driveLastSync}
+          driveSyncing={driveSyncing}
+          onDriveConnect={() => gPromptAsync()}
+          onDriveBackup={handleManualDriveBackup}
+          onDriveDisconnect={handleDisconnectDrive}
         />
       )}
     </View>
