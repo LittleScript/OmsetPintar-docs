@@ -75,4 +75,4 @@ Jika Anda memiliki pertanyaan mengenai Kebijakan Privasi ini, silakan hubungi:
 
 *Kebijakan Privasi ini berlaku untuk aplikasi OmsetKu versi 3.8.0 dan seterusnya.*
 
-**URL Online:** https://LittleScript.github.io/OmsetKu-docs/
+**URL Online:** https://littlescript.github.io/OmsetKu-docs/
