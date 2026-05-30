@@ -31,9 +31,10 @@ Setelah langkah ini selesai, isi GOOGLE_WEB_CLIENT_ID di App.js baris yang ditan
 2. **+ Create Credentials** → **OAuth client ID**
 3. Application type: **Web application**
 4. Name: `OmsetKu Web Client`
-5. Authorized redirect URIs — tambahkan:
+5. Authorized redirect URIs — tambahkan KEDUANYA:
    ```
    https://auth.expo.io/@aliangkoko/omsetku
+   com.omsetku.app://oauth2redirect/google
    ```
 6. **Create**
 7. **COPY Client ID** — bentuknya: `XXXXXXXXXX-xxxx.apps.googleusercontent.com`
