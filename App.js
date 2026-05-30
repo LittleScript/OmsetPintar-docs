@@ -2176,80 +2176,236 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
     try {
       setExporting(true);
       const wb       = XLSX.utils.book_new();
-      const activeTxns = (data.transactions||[]).filter(t => !t.deletedAt);
+      const txns     = (data.transactions||[]).filter(t => !t.deletedAt);
       const dfmt     = data.dateFormat || 'dd/mm/yyyy';
+      const yr       = data.activeYear || new Date().getFullYear();
+      const salesL   = data.salesList || [];
+      const company  = data.companyName || 'OmsetKu';
 
+      // ── STYLE LIBRARY ────────────────────────────────────────────
+      const S = {
+        title:  { fill:{patternType:'solid',fgColor:{rgb:'1E3A5F'}}, font:{bold:true,color:{rgb:'FFFFFF'},sz:16,name:'Calibri'}, alignment:{horizontal:'center',vertical:'center'} },
+        meta:   { fill:{patternType:'solid',fgColor:{rgb:'DBEAFE'}}, font:{color:{rgb:'1E3A8A'},sz:9,name:'Calibri'},            alignment:{horizontal:'center',vertical:'center'} },
+        secH:   { fill:{patternType:'solid',fgColor:{rgb:'2563EB'}}, font:{bold:true,color:{rgb:'FFFFFF'},sz:11,name:'Calibri'}, alignment:{horizontal:'left',vertical:'center'} },
+        colH:   { fill:{patternType:'solid',fgColor:{rgb:'1D4ED8'}}, font:{bold:true,color:{rgb:'FFFFFF'},sz:10,name:'Calibri'}, alignment:{horizontal:'center',vertical:'center'},
+                  border:{top:{style:'thin',color:{rgb:'BFDBFE'}},bottom:{style:'medium',color:{rgb:'1E40AF'}},left:{style:'thin',color:{rgb:'BFDBFE'}},right:{style:'thin',color:{rgb:'BFDBFE'}}} },
+        lbl:    { fill:{patternType:'solid',fgColor:{rgb:'F1F5F9'}}, font:{bold:true,color:{rgb:'475569'},sz:10},                alignment:{horizontal:'left',vertical:'center'} },
+        acc:    { fill:{patternType:'solid',fgColor:{rgb:'FFF7ED'}}, font:{bold:true,color:{rgb:'C2410C'},sz:13,name:'Calibri'},  alignment:{horizontal:'right',vertical:'center'}, numFmt:'#,##0' },
+        tot:    { fill:{patternType:'solid',fgColor:{rgb:'F0FDF4'}}, font:{bold:true,color:{rgb:'166534'},sz:10},                alignment:{horizontal:'left',vertical:'center'} },
+        totN:   { fill:{patternType:'solid',fgColor:{rgb:'F0FDF4'}}, font:{bold:true,color:{rgb:'166534'},sz:10},                alignment:{horizontal:'right',vertical:'center'}, numFmt:'#,##0' },
+        r0:     { fill:{patternType:'solid',fgColor:{rgb:'FFFFFF'}}, font:{color:{rgb:'334155'},sz:10},                          alignment:{horizontal:'left',vertical:'center'},
+                  border:{bottom:{style:'thin',color:{rgb:'E2E8F0'}}} },
+        r0N:    { fill:{patternType:'solid',fgColor:{rgb:'FFFFFF'}}, font:{color:{rgb:'334155'},sz:10},                          alignment:{horizontal:'right',vertical:'center'}, numFmt:'#,##0',
+                  border:{bottom:{style:'thin',color:{rgb:'E2E8F0'}}} },
+        r0C:    { fill:{patternType:'solid',fgColor:{rgb:'FFFFFF'}}, font:{color:{rgb:'334155'},sz:10},                          alignment:{horizontal:'center',vertical:'center'},
+                  border:{bottom:{style:'thin',color:{rgb:'E2E8F0'}}} },
+        r1:     { fill:{patternType:'solid',fgColor:{rgb:'F8FAFC'}}, font:{color:{rgb:'334155'},sz:10},                          alignment:{horizontal:'left',vertical:'center'},
+                  border:{bottom:{style:'thin',color:{rgb:'E2E8F0'}}} },
+        r1N:    { fill:{patternType:'solid',fgColor:{rgb:'F8FAFC'}}, font:{color:{rgb:'334155'},sz:10},                          alignment:{horizontal:'right',vertical:'center'}, numFmt:'#,##0',
+                  border:{bottom:{style:'thin',color:{rgb:'E2E8F0'}}} },
+        r1C:    { fill:{patternType:'solid',fgColor:{rgb:'F8FAFC'}}, font:{color:{rgb:'334155'},sz:10},                          alignment:{horizontal:'center',vertical:'center'},
+                  border:{bottom:{style:'thin',color:{rgb:'E2E8F0'}}} },
+        mono:   { font:{color:{rgb:'334155'},sz:10,name:'Courier New'}, alignment:{horizontal:'center',vertical:'center'} },
+        mono1:  { fill:{patternType:'solid',fgColor:{rgb:'F8FAFC'}}, font:{color:{rgb:'334155'},sz:10,name:'Courier New'}, alignment:{horizontal:'center',vertical:'center'} },
+      };
+
+      // ── HELPERS ───────────────────────────────────────────────────
+      const EC = (r, c) => XLSX.utils.encode_cell({r, c});
+      const sc = (ws, r, c, v, t, s) => { ws[EC(r,c)] = { v, t: t || (typeof v==='number'?'n':'s'), s }; };
+      const mg = (arr, r1, c1, r2, c2) => arr.push({s:{r:r1,c:c1},e:{r:r2,c:c2}});
+      const setRef = (ws, maxR, maxC) => { ws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0},e:{r:maxR,c:maxC}}); };
+
+      const yearTxns  = txns.filter(t => t.date.startsWith(String(yr)));
+      const yearTotal = yearTxns.reduce((a,t)=>a+t.amount,0);
+      const yearCount = yearTxns.length;
+
+      // ── SHEET 1: RINGKASAN (selalu ada) ──────────────────────────
+      {
+        const ws = {}; const mg_ = [];
+        let r = 0; const NCOL = 6;
+
+        // Judul & meta
+        sc(ws,r,0,company,'s',S.title); mg_(mg_,r,0,r,NCOL-1);
+        ws['!rows'] = [{hpt:34}]; r++;
+        sc(ws,r,0,`Laporan Omset Tahun ${yr}   |   OmsetKu v${APP_VER}   |   ${new Date().toLocaleDateString('id-ID',{dateStyle:'long'})}`,
+          's',S.meta); mg_(mg_,r,0,r,NCOL-1); r++;
+        r++; // empty
+
+        // KPI box
+        sc(ws,r,0,'  📊  RINGKASAN OMSET','s',S.secH); mg_(mg_,r,0,r,NCOL-1); r++;
+        const kpiRows = [
+          ['  Total Omset Tahun '+yr, yearTotal, S.lbl, S.acc],
+          ['  Total Bon',             yearCount, S.lbl, {...S.r0,font:{bold:true,sz:12},alignment:{horizontal:'right'}}],
+          ['  Rata-rata per Bon',     yearCount>0?Math.round(yearTotal/yearCount):0, S.lbl, {...S.r0N,font:{bold:true,sz:10}}],
+          ['  Jumlah Sales Aktif',    salesL.length, S.lbl, {...S.r0,alignment:{horizontal:'right'}}],
+          ['  Total Pelanggan Unik',  (() => { const m={}; txns.forEach(t=>{m[t.sales+'_'+getNorm(t.customerName)]=1;}); return Object.keys(m).length; })(), S.lbl, {...S.r0,alignment:{horizontal:'right'}}],
+        ];
+        kpiRows.forEach(([lbl,val,ls,vs]) => {
+          sc(ws,r,0,lbl,'s',ls); mg_(mg_,r,0,r,2);
+          sc(ws,r,3,val,typeof val==='number'?'n':'s',vs); mg_(mg_,r,3,r,NCOL-1);
+          r++;
+        });
+        r++;
+
+        // Per-sales table
+        sc(ws,r,0,'  👥  OMSET PER SALES','s',S.secH); mg_(mg_,r,0,r,NCOL-1); r++;
+        ['Sales','Total Omset (Rp)','Jumlah Bon','% Total','Rata-rata/Bon','Hari Ini (Rp)'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH));
+        r++;
+        const today_ = todayStr();
+        const bySales_ = salesL.map(s=>{
+          const st=yearTxns.filter(t=>t.sales===s);
+          const td=txns.filter(t=>t.sales===s&&t.date===today_);
+          return {n:s,tot:st.reduce((a,t)=>a+t.amount,0),cnt:st.length,
+            avg:st.length>0?Math.round(st.reduce((a,t)=>a+t.amount,0)/st.length):0,
+            today:td.reduce((a,t)=>a+t.amount,0)};
+        });
+        bySales_.forEach((bs,idx)=>{
+          const a=idx%2===1;
+          sc(ws,r,0,bs.n,'s',a?S.r1:S.r0);
+          sc(ws,r,1,bs.tot,'n',a?S.r1N:S.r0N);
+          sc(ws,r,2,bs.cnt,'n',a?S.r1N:S.r0N);
+          sc(ws,r,3,yearTotal>0?+(bs.tot/yearTotal*100).toFixed(1):0,'n',{...(a?S.r1C:S.r0C),numFmt:'0.0'});
+          sc(ws,r,4,bs.avg,'n',a?S.r1N:S.r0N);
+          sc(ws,r,5,bs.today,'n',a?S.r1N:S.r0N);
+          r++;
+        });
+        sc(ws,r,0,'TOTAL','s',S.tot); sc(ws,r,1,yearTotal,'n',S.totN);
+        sc(ws,r,2,yearCount,'n',S.totN); sc(ws,r,3,100,'n',{...S.tot,alignment:{horizontal:'center'},numFmt:'0'});
+        sc(ws,r,4,yearCount>0?Math.round(yearTotal/yearCount):0,'n',S.totN);
+        sc(ws,r,5,bySales_.reduce((a,b)=>a+b.today,0),'n',S.totN); r++;
+        r++;
+
+        // Rekap bulanan
+        sc(ws,r,0,'  📅  REKAP BULANAN '+yr,'s',S.secH); mg_(mg_,r,0,r,NCOL-1); r++;
+        const mCols = ['Bulan',...salesL,'TOTAL'];
+        mCols.forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
+        MONTHS_F.forEach((m_,mi)=>{
+          const mo=String(mi+1).padStart(2,'0');
+          const mTx=yearTxns.filter(t=>t.date.slice(5,7)===mo);
+          const mTot=mTx.reduce((a,t)=>a+t.amount,0);
+          const a=mi%2===1;
+          sc(ws,r,0,m_,'s',a?S.r1:S.r0);
+          salesL.forEach((s,ci)=>sc(ws,r,ci+1,mTx.filter(t=>t.sales===s).reduce((a,t)=>a+t.amount,0),'n',a?S.r1N:S.r0N));
+          sc(ws,r,salesL.length+1,mTot,'n',a?S.r1N:S.r0N); r++;
+        });
+        sc(ws,r,0,'TOTAL','s',S.tot);
+        salesL.forEach((s,ci)=>sc(ws,r,ci+1,yearTxns.filter(t=>t.sales===s).reduce((a,t)=>a+t.amount,0),'n',S.totN));
+        sc(ws,r,salesL.length+1,yearTotal,'n',S.totN); r++;
+
+        ws['!merges']=mg_; setRef(ws,r,NCOL-1);
+        ws['!cols']=[{wch:26},{wch:18},{wch:12},{wch:10},{wch:16},{wch:16}];
+        XLSX.utils.book_append_sheet(wb,ws,'📊 Ringkasan');
+      }
+
+      // ── TRANSACTION SHEETS ────────────────────────────────────────
       if (excelChecked.transaksi) {
-        // Sheet terpisah per sales (max 31 karakter nama sheet Excel)
-        (data.salesList||[]).forEach(s => {
-          const rows = [...activeTxns]
-            .filter(t => t.sales === s)
-            .sort((a,b) => a.date.localeCompare(b.date))
-            .map(t => ({
-              'No. Bon':        t.bonNumber,
-              'Tanggal':        fmtDate(t.date, dfmt),
-              'Nama Pelanggan': t.customerName,
-              'Total (Rp)':     t.amount,
-              'Catatan':        t.notes || '',
-            }));
-          const sheetName = `Txn-${s}`.slice(0, 31);
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{'Info':'Belum ada data'}]), sheetName);
+        salesL.forEach(s=>{
+          const sTxns=[...txns].filter(t=>t.sales===s).sort((a,b)=>b.date.localeCompare(a.date));
+          const ws={}; const mg_=[];
+          let r=0;
+          const sTotal=sTxns.reduce((a,t)=>a+t.amount,0);
+          // Header
+          sc(ws,r,0,`${s}  —  Riwayat Transaksi`,'s',S.title); mg_(mg_,r,0,r,4); r++;
+          sc(ws,r,0,`${sTxns.length} bon  |  Total: Rp ${sTotal.toLocaleString('id-ID')}  |  ${company}`,'s',S.meta); mg_(mg_,r,0,r,4); r++;
+          ['No. Bon','Tanggal','Nama Pelanggan','Total (Rp)','Catatan'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
+          sTxns.forEach((t,idx)=>{
+            const a=idx%2===1;
+            sc(ws,r,0,t.bonNumber,'s',a?S.mono1:S.mono);
+            sc(ws,r,1,fmtDate(t.date,dfmt),'s',a?S.r1C:S.r0C);
+            sc(ws,r,2,t.customerName,'s',a?S.r1:S.r0);
+            sc(ws,r,3,t.amount,'n',a?S.r1N:S.r0N);
+            sc(ws,r,4,t.notes||'','s',a?S.r1:S.r0); r++;
+          });
+          sc(ws,r,0,'TOTAL','s',S.tot); mg_(mg_,r,0,r,2);
+          sc(ws,r,1,'','s',S.tot); sc(ws,r,2,'','s',S.tot);
+          sc(ws,r,3,sTotal,'n',S.totN); sc(ws,r,4,'','s',S.tot); r++;
+          ws['!merges']=mg_; setRef(ws,r,4);
+          ws['!cols']=[{wch:14},{wch:13},{wch:28},{wch:16},{wch:22}];
+          ws['!rows']=[{hpt:28},{hpt:18},{hpt:20}];
+          ws['!autofilter']={ref:'A3:E3'};
+          XLSX.utils.book_append_sheet(wb,ws,s.slice(0,31));
         });
       }
 
+      // ── PER SALES ─────────────────────────────────────────────────
       if (excelChecked.per_sales) {
-        const rows = (data.salesList||[]).map(s => {
-          const sTx = activeTxns.filter(t => t.sales === s);
-          return { 'Sales': s, 'Jumlah Bon': sTx.length, 'Total Omset (Rp)': sTx.reduce((a,t)=>a+t.amount,0) };
+        const ws={}; const mg_=[]; let r=0;
+        sc(ws,r,0,'Rekap per Sales','s',S.title); mg_(mg_,r,0,r,4); r++;
+        sc(ws,r,0,`${company}  |  Tahun ${yr}`,'s',S.meta); mg_(mg_,r,0,r,4); r++;
+        ['Sales','Total Omset (Rp)','Jumlah Bon','Rata-rata/Bon (Rp)','% Kontribusi'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
+        salesL.forEach((s,idx)=>{
+          const st=txns.filter(t=>t.sales===s);
+          const tot=st.reduce((a,t)=>a+t.amount,0);
+          const a=idx%2===1;
+          sc(ws,r,0,s,'s',a?S.r1:S.r0); sc(ws,r,1,tot,'n',a?S.r1N:S.r0N);
+          sc(ws,r,2,st.length,'n',a?S.r1N:S.r0N);
+          sc(ws,r,3,st.length>0?Math.round(tot/st.length):0,'n',a?S.r1N:S.r0N);
+          const allTot=txns.reduce((a,t)=>a+t.amount,0);
+          sc(ws,r,4,allTot>0?+(tot/allTot*100).toFixed(1):0,'n',{...(a?S.r1C:S.r0C),numFmt:'0.0'}); r++;
         });
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Per Sales');
+        const allTot2=txns.reduce((a,t)=>a+t.amount,0);
+        sc(ws,r,0,'TOTAL','s',S.tot); sc(ws,r,1,allTot2,'n',S.totN);
+        sc(ws,r,2,txns.length,'n',S.totN);
+        sc(ws,r,3,txns.length>0?Math.round(allTot2/txns.length):0,'n',S.totN);
+        sc(ws,r,4,100,'n',{...S.tot,alignment:{horizontal:'center'},numFmt:'0'}); r++;
+        ws['!merges']=mg_; setRef(ws,r,4);
+        ws['!cols']=[{wch:18},{wch:18},{wch:13},{wch:18},{wch:14}];
+        ws['!rows']=[{hpt:24},{hpt:18}];
+        XLSX.utils.book_append_sheet(wb,ws,'Per Sales');
       }
 
-      if (excelChecked.bulanan) {
-        const yr   = data.activeYear || new Date().getFullYear();
-        const rows = MONTHS_F.map((month, i) => {
-          const mo  = String(i+1).padStart(2,'0');
-          const mTx = activeTxns.filter(t => t.date.slice(0,7) === `${yr}-${mo}`);
-          const row = { 'Bulan': month, 'Total (Rp)': mTx.reduce((a,t)=>a+t.amount,0) };
-          (data.salesList||[]).forEach(s => { row[s] = mTx.filter(t=>t.sales===s).reduce((a,t)=>a+t.amount,0); });
-          return row;
-        });
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), `Bulanan ${yr}`);
-      }
-
+      // ── PELANGGAN ─────────────────────────────────────────────────
       if (excelChecked.pelanggan) {
-        const custMap = {};
-        activeTxns.forEach(t => {
-          const key = `${t.sales}|||${getNorm(t.customerName)}`;
-          if (!custMap[key]) custMap[key] = { name:t.customerName, sales:t.sales, count:0, total:0, last:'' };
-          custMap[key].count++;
-          custMap[key].total += t.amount;
-          if (t.date > custMap[key].last) custMap[key].last = t.date;
+        const cMap={};
+        txns.forEach(t=>{
+          const k=`${t.sales}|||${getNorm(t.customerName)}`;
+          if(!cMap[k]) cMap[k]={name:t.customerName,sales:t.sales,cnt:0,tot:0,last:''};
+          cMap[k].cnt++; cMap[k].tot+=t.amount;
+          if(t.date>cMap[k].last) cMap[k].last=t.date;
         });
-        const rows = Object.values(custMap)
-          .sort((a,b) => a.name.localeCompare(b.name,'id'))
-          .map((c, i) => ({
-            'No': i+1, 'Nama Pelanggan': c.name, 'Sales': c.sales,
-            'Jumlah Bon': c.count, 'Total Belanja (Rp)': c.total,
-            'Terakhir': fmtDate(c.last, dfmt),
-          }));
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Pelanggan');
+        const ws={}; const mg_=[]; let r=0;
+        sc(ws,r,0,'Daftar Pelanggan','s',S.title); mg_(mg_,r,0,r,5); r++;
+        sc(ws,r,0,`${company}  |  ${Object.keys(cMap).length} pelanggan unik`,'s',S.meta); mg_(mg_,r,0,r,5); r++;
+        ['No','Nama Pelanggan','Sales','Jumlah Bon','Total Belanja (Rp)','Terakhir Transaksi'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
+        Object.values(cMap).sort((a,b)=>a.name.localeCompare(b.name,'id')).forEach((c,i)=>{
+          const a=i%2===1;
+          sc(ws,r,0,i+1,'n',{...(a?S.r1C:S.r0C),font:{color:{rgb:'94A3B8'},sz:9}});
+          sc(ws,r,1,c.name,'s',a?S.r1:S.r0); sc(ws,r,2,c.sales,'s',a?S.r1C:S.r0C);
+          sc(ws,r,3,c.cnt,'n',a?S.r1N:S.r0N); sc(ws,r,4,c.tot,'n',a?S.r1N:S.r0N);
+          sc(ws,r,5,fmtDate(c.last,dfmt),'s',a?S.r1C:S.r0C); r++;
+        });
+        ws['!merges']=mg_; setRef(ws,r,5);
+        ws['!cols']=[{wch:5},{wch:28},{wch:12},{wch:12},{wch:18},{wch:16}];
+        ws['!rows']=[{hpt:24},{hpt:18}]; ws['!autofilter']={ref:'A3:F3'};
+        XLSX.utils.book_append_sheet(wb,ws,'Pelanggan');
       }
 
+      // ── RANKING ───────────────────────────────────────────────────
       if (excelChecked.ranking) {
-        const rows = [];
-        (data.salesList||[]).forEach(s => {
-          getRanking(activeTxns, s).forEach((r, i) => {
-            rows.push({ 'Rank':i+1, 'Sales':s, 'Nama':r.name, 'Jumlah Bon':r.count, 'Total (Rp)':r.total, 'Terakhir':fmtDate(r.last,dfmt) });
+        const ws={}; const mg_=[]; let r=0;
+        sc(ws,r,0,'Ranking Pelanggan','s',S.title); mg_(mg_,r,0,r,5); r++;
+        sc(ws,r,0,`${company}  |  All Time`,'s',S.meta); mg_(mg_,r,0,r,5); r++;
+        ['Rank','Nama Pelanggan','Sales','Jumlah Bon','Total Belanja (Rp)','Terakhir Transaksi'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
+        salesL.forEach(s=>{
+          getRanking(txns,s).forEach((rv,i)=>{
+            const a=i%2===1;
+            const medal=i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':'';
+            sc(ws,r,0,i+1,'n',{...(a?S.r1C:S.r0C),font:{bold:i<3,color:{rgb:i===0?'F59E0B':i===1?'9CA3AF':i===2?'B45309':'334155'},sz:10}});
+            sc(ws,r,1,medal+rv.name,'s',a?S.r1:S.r0); sc(ws,r,2,s,'s',a?S.r1C:S.r0C);
+            sc(ws,r,3,rv.count,'n',a?S.r1N:S.r0N); sc(ws,r,4,rv.total,'n',a?S.r1N:S.r0N);
+            sc(ws,r,5,fmtDate(rv.last,dfmt),'s',a?S.r1C:S.r0C); r++;
           });
         });
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Ranking');
+        ws['!merges']=mg_; setRef(ws,r,5);
+        ws['!cols']=[{wch:6},{wch:28},{wch:12},{wch:12},{wch:18},{wch:16}];
+        ws['!rows']=[{hpt:24},{hpt:18}];
+        XLSX.utils.book_append_sheet(wb,ws,'Ranking');
       }
 
-      const base64   = XLSX.write(wb, { type:'base64', bookType:'xlsx' });
-      const filename = `omsetku-${todayStr()}.xlsx`;
-      const uri      = FileSystem.documentDirectory + filename;
-      await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+      const base64  = XLSX.write(wb, { type:'base64', bookType:'xlsx', cellStyles:true });
+      const fname   = `OmsetKu-${company.replace(/\s/g,'-')}-${yr}.xlsx`;
+      const uri     = FileSystem.documentDirectory + fname;
+      await FileSystem.writeAsStringAsync(uri, base64, { encoding:FileSystem.EncodingType.Base64 });
       await Sharing.shareAsync(uri, {
         mimeType:    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         dialogTitle: 'Export Excel OmsetKu',
@@ -2641,7 +2797,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           <View style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.65)' }}>
             <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, paddingBottom:36 }}>
               <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:6 }}>📊 Export ke Excel</Text>
-              <Text style={{ color:C.muted, fontSize:12, marginBottom:16 }}>Pilih sheet yang ingin diexport dalam 1 file .xlsx</Text>
+              <Text style={{ color:C.muted, fontSize:12, marginBottom:4 }}>Sheet <Text style={{ color:C.accent, fontWeight:'700' }}>📊 Ringkasan</Text> selalu disertakan</Text>
+              <Text style={{ color:C.muted, fontSize:11, marginBottom:14 }}>Tambahkan sheet lain sesuai kebutuhan:</Text>
               {[
                 { id:'transaksi', label:'📋 Semua Transaksi',     desc:'Seluruh bon aktif lengkap' },
                 { id:'per_sales', label:'👤 Rekap per Sales',      desc:'Total omset & bon per sales' },
