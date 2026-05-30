@@ -1,15 +1,7 @@
 /**
- * OmsetKu — App.js
- * React Native (Expo) | Storage: expo-sqlite | All screens complete
- *
- * Fixed from DeepSeek baseline:
- *  - HistoryScreen, RankingScreen, SettingsModal: fully implemented
- *  - Storage: expo-sqlite (no JSON blob, proper tables + indexes)
- *  - parseBon: handles dateCode formats
- *  - todayStr: uses local timezone (not UTC)
- *  - styles: moved fn helpers outside StyleSheet.create
- *  - Double-save prevention on Input
- *  - Soft delete with 24h undo in History
+ * OmsetKu — App.js v4.0.0
+ * React Native (Expo) | SQLite offline-first | Android
+ * © 2026 aliangkoko@gmail.com
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext } from 'react';
@@ -33,6 +25,7 @@ import * as TaskManager from 'expo-task-manager';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import * as AuthSession from 'expo-auth-session';
+import * as Notifications from 'expo-notifications';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -53,19 +46,57 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.0.0';
+const APP_VER    = '4.1.0';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
 // Isi dengan Web Client ID dari Google Cloud Console (lihat GOOGLE_DRIVE_SETUP.md)
 const GOOGLE_WEB_CLIENT_ID = '846894493859-vl3v947mucd6chu7tm0agi7kbitpb27a.apps.googleusercontent.com';
 const GDRIVE_TOKEN_KEY      = 'gdrive_access_token';
+const GDRIVE_EXPIRY_KEY     = 'gdrive_token_expiry'; // timestamp ms kapan token expired
 const GDRIVE_EMAIL_KEY      = 'gdrive_user_email';
 const GDRIVE_LAST_BACKUP_KEY= 'gdrive_last_backup';
 const GDRIVE_HOUR_KEY       = 'gdrive_backup_hour'; // jam backup: 0–23, default 23
 const GDRIVE_TASK_NAME      = 'OMSETKU_GDRIVE_BACKUP';
+const NOTIF_TASK_ID         = 'omsetku-daily-reminder';
 
 WebBrowser.maybeCompleteAuthSession();
+
+// Cek apakah token GDrive masih valid (belum expired)
+async function isGdriveTokenValid() {
+  const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
+  if (!token) return false;
+  const expiry = await SecureStore.getItemAsync(GDRIVE_EXPIRY_KEY);
+  if (!expiry) return true; // tidak ada info expiry → asumsi masih valid
+  return Date.now() < parseInt(expiry, 10) - 60_000; // buffer 60 detik
+}
+
+// Konfigurasi tampilan notifikasi saat app foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+// Jadwalkan ulang notifikasi harian
+async function scheduleReminder(hour) {
+  await Notifications.cancelScheduledNotificationAsync(NOTIF_TASK_ID).catch(() => {});
+  await Notifications.scheduleNotificationAsync({
+    identifier: NOTIF_TASK_ID,
+    content: {
+      title: '📊 OmsetKu',
+      body: 'Jangan lupa catat omset hari ini!',
+      sound: true,
+    },
+    trigger: { hour, minute: 0, repeats: true },
+  });
+}
+
+async function cancelReminder() {
+  await Notifications.cancelScheduledNotificationAsync(NOTIF_TASK_ID).catch(() => {});
+}
 
 // Upload JSON backup ke Google Drive folder "OmsetKu Backup"
 async function uploadToDrive(accessToken, payload) {
@@ -118,6 +149,10 @@ async function uploadToDrive(accessToken, payload) {
 // Background task — cek setiap 15 menit, backup pada jam yang dipilih user
 TaskManager.defineTask(GDRIVE_TASK_NAME, async () => {
   try {
+    // Cek token dan validitasnya
+    const tokenValid = await isGdriveTokenValid();
+    if (!tokenValid) return BackgroundFetch.BackgroundFetchResult.Failed; // perlu reconnect
+
     const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
     if (!token) return BackgroundFetch.BackgroundFetchResult.NoData;
 
@@ -240,6 +275,12 @@ async function initDb() {
   try {
     await db.execAsync(`ALTER TABLE settings ADD COLUMN pin_lock_enabled INTEGER NOT NULL DEFAULT 0`);
   } catch(e) {}
+  try {
+    await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_enabled INTEGER NOT NULL DEFAULT 0`);
+  } catch(e) {}
+  try {
+    await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_hour INTEGER NOT NULL DEFAULT 20`);
+  } catch(e) {}
   await db.execAsync(`PRAGMA foreign_keys = ON;`);
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -332,6 +373,8 @@ async function assembleData(db) {
   return {
     themeMode:      cfg.theme_mode || 'dark',
     pinLockEnabled: !!cfg.pin_lock_enabled,
+    notifEnabled:   !!cfg.notif_enabled,
+    notifHour:      cfg.notif_hour ?? 20,
     companyName:    cfg.company_name,
     isSetupComplete:!!cfg.is_setup_complete,
     bonConfig: {
@@ -465,6 +508,8 @@ async function updateSettings(db, fields) {
   if (fields.activeYear !=null){ sets.push('active_year=?');     vals.push(fields.activeYear); }
   if (fields.themeMode     !=null){ sets.push('theme_mode=?');       vals.push(fields.themeMode); }
   if (fields.pinLockEnabled!=null){ sets.push('pin_lock_enabled=?'); vals.push(fields.pinLockEnabled?1:0); }
+  if (fields.notifEnabled  !=null){ sets.push('notif_enabled=?');    vals.push(fields.notifEnabled?1:0); }
+  if (fields.notifHour     !=null){ sets.push('notif_hour=?');       vals.push(fields.notifHour); }
   if (!sets.length) return;
   await db.runAsync(`UPDATE settings SET ${sets.join(',')} WHERE id=1`, vals);
 }
@@ -1919,13 +1964,16 @@ function RankingScreen({ data }) {
 
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
 function SettingsModal({ data, onUpdate, onImport, onClose,
-  driveEmail, driveLastSync, driveSyncing, onDriveConnect, onDriveBackup, onDriveDisconnect }) {
+  driveEmail, driveLastSync, driveSyncing, driveTokenExpired,
+  onDriveConnect, onDriveBackup, onDriveDisconnect }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
 
   const { salesList, bonConfig, dateFormat, companyName } = data;
-  const [themeMode, setThemeMode]   = useState(data.themeMode||'dark');
+  const [themeMode, setThemeMode]       = useState(data.themeMode||'dark');
   const [pinLockEnabled, setPinLockEnabled] = useState(data.pinLockEnabled||false);
+  const [notifEnabled,   setNotifEnabled]   = useState(data.notifEnabled||false);
+  const [notifHour,      setNotifHour]      = useState(data.notifHour??20);
   const [importPreview, setImportPreview] = useState(null);
   const [importing, setImporting]         = useState(false);
   const [showExcelMenu, setShowExcelMenu] = useState(false);
@@ -2225,8 +2273,22 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
             </Text>
             {driveEmail ? (
               <>
+                {/* Warning token expired */}
+                {driveTokenExpired && (
+                  <View style={{ backgroundColor:C.warning+'22', borderRadius:10, padding:12, marginBottom:10, flexDirection:'row', alignItems:'center', gap:10 }}>
+                    <Text style={{ flex:1, color:C.warning, fontSize:12, fontWeight:'700' }}>
+                      ⚠️ Sesi expired — backup otomatis berhenti
+                    </Text>
+                    <TouchableOpacity onPress={onDriveConnect}
+                      style={{ backgroundColor:C.warning, borderRadius:8, paddingHorizontal:10, paddingVertical:5 }}>
+                      <Text style={{ color:'#fff', fontSize:11, fontWeight:'800' }}>Reconnect</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
                 <View style={{ flexDirection:'row', alignItems:'center', gap:10, marginBottom:12 }}>
-                  <View style={{ width:36, height:36, borderRadius:18, backgroundColor:C.success+'22', alignItems:'center', justifyContent:'center' }}>
+                  <View style={{ width:36, height:36, borderRadius:18,
+                    backgroundColor: driveTokenExpired ? C.warning+'22' : C.success+'22',
+                    alignItems:'center', justifyContent:'center' }}>
                     <Text style={{ fontSize:18 }}>☁️</Text>
                   </View>
                   <View style={{ flex:1 }}>
@@ -2235,7 +2297,8 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
                       {driveLastSync ? `Terakhir: ${driveLastSync}` : 'Belum pernah backup'}
                     </Text>
                   </View>
-                  <View style={{ width:10, height:10, borderRadius:5, backgroundColor:C.success }} />
+                  <View style={{ width:10, height:10, borderRadius:5,
+                    backgroundColor: driveTokenExpired ? C.warning : C.success }} />
                 </View>
                 <TouchableOpacity onPress={onDriveBackup} disabled={driveSyncing}
                   style={{ backgroundColor:C.success+'22', borderWidth:1.5, borderColor:C.success,
@@ -2369,6 +2432,81 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
                   alignSelf: pinLockEnabled ? 'flex-end' : 'flex-start' }} />
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Notifikasi Pengingat */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+              NOTIFIKASI
+            </Text>
+            <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom: notifEnabled ? 12 : 0 }}>
+              <View style={{ flex:1 }}>
+                <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>🔔 Pengingat Harian</Text>
+                <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>
+                  {notifEnabled ? `✅ Aktif — reminder jam ${String(notifHour).padStart(2,'0')}:00` : 'Nonaktif'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={async () => {
+                  if (!notifEnabled) {
+                    // Minta permission dulu
+                    const { status } = await Notifications.requestPermissionsAsync();
+                    if (status !== 'granted') {
+                      Alert.alert(
+                        'Izin Notifikasi Diperlukan',
+                        'Aktifkan izin notifikasi di Pengaturan HP → Aplikasi → OmsetKu → Notifikasi',
+                        [{ text: 'OK' }]
+                      );
+                      return;
+                    }
+                    setNotifEnabled(true);
+                    await scheduleReminder(notifHour);
+                    onUpdate({ notifEnabled: true, notifHour });
+                    Alert.alert('🔔 Notifikasi Aktif', `Reminder akan muncul setiap hari jam ${String(notifHour).padStart(2,'0')}:00`);
+                  } else {
+                    setNotifEnabled(false);
+                    await cancelReminder();
+                    onUpdate({ notifEnabled: false });
+                  }
+                }}
+                style={{ width:50, height:28, borderRadius:14,
+                  backgroundColor: notifEnabled ? C.success : C.input,
+                  justifyContent:'center', paddingHorizontal:3 }}>
+                <View style={{ width:22, height:22, borderRadius:11, backgroundColor:'#fff',
+                  alignSelf: notifEnabled ? 'flex-end' : 'flex-start' }} />
+              </TouchableOpacity>
+            </View>
+            {notifEnabled && (
+              <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between',
+                backgroundColor:C.input, borderRadius:12, padding:12 }}>
+                <Text style={{ color:C.muted, fontSize:12 }}>⏰ Jam pengingat:</Text>
+                <View style={{ flexDirection:'row', alignItems:'center', gap:6 }}>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      const h = notifHour === 0 ? 23 : notifHour - 1;
+                      setNotifHour(h);
+                      await scheduleReminder(h);
+                      onUpdate({ notifEnabled: true, notifHour: h });
+                    }}
+                    style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
+                    <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>‹</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color:C.accent, fontSize:16, fontWeight:'800', minWidth:52, textAlign:'center' }}>
+                    {String(notifHour).padStart(2,'0')}:00
+                  </Text>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      const h = notifHour === 23 ? 0 : notifHour + 1;
+                      setNotifHour(h);
+                      await scheduleReminder(h);
+                      onUpdate({ notifEnabled: true, notifHour: h });
+                    }}
+                    style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
+                    <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>›</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
 
           {/* Theme */}
@@ -2985,6 +3123,10 @@ export default function App() {
         // Apply saved theme
         const savedTheme = loaded?.themeMode || 'dark';
         setThemeMode(savedTheme);
+        // Re-schedule notifikasi jika aktif (hilang setelah reinstall)
+        if (loaded?.notifEnabled) {
+          scheduleReminder(loaded.notifHour ?? 20).catch(() => {});
+        }
         setData(loaded || { isSetupComplete: false, salesList: [], transactions: [], companyName: '', bonConfig:{prefix:'INV',separator:'-',digitLength:5}, dateFormat:'dd/mm/yyyy', activeYear:new Date().getFullYear(), lastDate:todayStr(), lastSales:'', nextSeq:1 });
         setDbReady(true);
       } catch(e) {
@@ -3002,9 +3144,10 @@ export default function App() {
   }, []);
 
   // ── Google Drive Backup ─────────────────────────────────────
-  const [driveEmail,    setDriveEmail]    = useState('');
-  const [driveLastSync, setDriveLastSync] = useState('');
-  const [driveSyncing,  setDriveSyncing]  = useState(false);
+  const [driveEmail,       setDriveEmail]       = useState('');
+  const [driveLastSync,    setDriveLastSync]    = useState('');
+  const [driveSyncing,     setDriveSyncing]     = useState(false);
+  const [driveTokenExpired,setDriveTokenExpired]= useState(false);
 
   const [gRequest, gResponse, gPromptAsync] = Google.useAuthRequest({
     webClientId: GOOGLE_WEB_CLIENT_ID,
@@ -3012,15 +3155,32 @@ export default function App() {
     redirectUri: AuthSession.makeRedirectUri({ useProxy: true }),
   });
 
-  // Load stored drive state on startup
+  // Load stored drive state on startup + cek token validity
   useEffect(() => {
     (async () => {
       const email = await SecureStore.getItemAsync(GDRIVE_EMAIL_KEY);
       const last  = await SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY);
-      if (email) setDriveEmail(email);
-      if (last)  setDriveLastSync(new Date(parseInt(last)).toLocaleDateString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }));
+      if (email) {
+        setDriveEmail(email);
+        const valid = await isGdriveTokenValid();
+        setDriveTokenExpired(!valid);
+      }
+      if (last) setDriveLastSync(
+        new Date(parseInt(last)).toLocaleDateString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+      );
     })();
   }, []);
+
+  // Re-cek token saat app kembali ke foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (state) => {
+      if (state === 'active' && driveEmail) {
+        const valid = await isGdriveTokenValid();
+        setDriveTokenExpired(!valid);
+      }
+    });
+    return () => sub.remove();
+  }, [driveEmail]);
 
   // Handle OAuth response
   useEffect(() => {
@@ -3030,6 +3190,10 @@ export default function App() {
         try {
           // Simpan token
           await SecureStore.setItemAsync(GDRIVE_TOKEN_KEY, authentication.accessToken);
+          // Simpan expiry — default 55 menit jika expiresIn tidak ada
+          const expiresIn = authentication.expiresIn ?? 3300;
+          await SecureStore.setItemAsync(GDRIVE_EXPIRY_KEY, String(Date.now() + expiresIn * 1000));
+          setDriveTokenExpired(false);
           // Ambil email user
           const infoRes = await fetch('https://www.googleapis.com/userinfo/v2/me', {
             headers: { Authorization: `Bearer ${authentication.accessToken}` },
@@ -3052,6 +3216,19 @@ export default function App() {
   }, [gResponse]);
 
   const handleManualDriveBackup = async () => {
+    // Cek apakah token masih valid
+    const valid = await isGdriveTokenValid();
+    if (!valid) {
+      Alert.alert(
+        '⚠️ Sesi Expired',
+        'Token Google Drive sudah kadaluarsa. Silakan reconnect untuk melanjutkan backup.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: '🔗 Reconnect', onPress: () => gRequest && gPromptAsync() },
+        ]
+      );
+      return;
+    }
     const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
     if (!token) { Alert.alert('','Hubungkan Google Drive dulu di Settings'); return; }
     try {
@@ -3366,6 +3543,7 @@ export default function App() {
           driveEmail={driveEmail}
           driveLastSync={driveLastSync}
           driveSyncing={driveSyncing}
+          driveTokenExpired={driveTokenExpired}
           onDriveConnect={() => gRequest && gPromptAsync()}
           onDriveBackup={handleManualDriveBackup}
           onDriveDisconnect={handleDisconnectDrive}
