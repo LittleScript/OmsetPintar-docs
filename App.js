@@ -32,6 +32,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
+import * as AuthSession from 'expo-auth-session';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -2741,6 +2742,7 @@ export default function App() {
   const [gRequest, gResponse, gPromptAsync] = Google.useAuthRequest({
     webClientId: GOOGLE_WEB_CLIENT_ID,
     scopes: ['https://www.googleapis.com/auth/drive.file', 'email', 'profile'],
+    redirectUri: AuthSession.makeRedirectUri({ useProxy: true }),
   });
 
   // Load stored drive state on startup
