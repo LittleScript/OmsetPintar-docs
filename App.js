@@ -42,7 +42,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.1.2';
+const APP_VER    = '3.2.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
@@ -656,6 +656,36 @@ function InputScreen({ data, onSave }) {
     [customer, transactions, sales]
   );
 
+  const currentBonSeq = useMemo(() => {
+    const numPart = (bonNo.match(/(\d+)$/) || ['1'])[0];
+    return parseInt(numPart, 10) || 1;
+  }, [bonNo]);
+
+  const handleBonPrev = () => {
+    if (currentBonSeq <= 1) return;
+    setBonNo(genBon(currentBonSeq - 1, bonConfig));
+    setBonOverride(true);
+    setBonEditing(false);
+  };
+
+  const handleBonNext = () => {
+    setBonNo(genBon(currentBonSeq + 1, bonConfig));
+    setBonOverride(true);
+    setBonEditing(false);
+  };
+
+  const handleDatePrev = () => {
+    const d = new Date(date + 'T12:00:00');
+    d.setDate(d.getDate() - 1);
+    setDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+  };
+
+  const handleDateNext = () => {
+    const d = new Date(date + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    setDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+  };
+
   const handleSave = async () => {
     const cleanAmt = parseInt(amount.replace(/\D/g,'')) || 0;
     if (!customer.trim() || cleanAmt <= 0 || saving) return;
@@ -692,63 +722,88 @@ function InputScreen({ data, onSave }) {
         keyboardShouldPersistTaps="handled">
 
         {/* Bon number */}
-        <TouchableOpacity
-          onPress={() => {
-            // Extract only numeric part for editing
-            const numPart = (bonNo.match(/(\d+)$/) || ['1'])[0];
-            setBonEditValue(numPart.replace(/^0+/, '') || '1');
-            setBonEditing(true);
-          }}
-          style={[st.card, { alignItems:'center', paddingVertical:14 }]}>
-          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1, textTransform:'uppercase', marginBottom:4 }}>
-            NO. BON  (tap untuk edit)
+        <View style={[st.card, { paddingVertical:14 }]}>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1, textTransform:'uppercase', marginBottom:8, textAlign:'center' }}>
+            NO. BON  (tap angka untuk edit)
           </Text>
-          {bonEditing ? (
-            // Show prefix as static text + editable number only
-            <View style={{ flexDirection:'row', alignItems:'center', gap:2 }}>
-              {(bonConfig.prefix || bonConfig.separator) ? (
-                <Text style={[st.mono, { color:C.muted, fontSize:20, fontWeight:'700' }]}>
-                  {bonConfig.prefix}{bonConfig.separator}
+          <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+            <TouchableOpacity
+              onPress={handleBonPrev}
+              disabled={currentBonSeq <= 1}
+              style={{ backgroundColor:C.input, borderRadius:10, paddingHorizontal:16, paddingVertical:12, opacity: currentBonSeq <= 1 ? 0.3 : 1 }}>
+              <Text style={{ color:C.text, fontSize:22, fontWeight:'700' }}>‹</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                const numPart = (bonNo.match(/(\d+)$/) || ['1'])[0];
+                setBonEditValue(numPart.replace(/^0+/, '') || '1');
+                setBonEditing(true);
+              }}
+              style={{ flex:1, alignItems:'center', paddingHorizontal:8 }}>
+              {bonEditing ? (
+                <View style={{ flexDirection:'row', alignItems:'center', gap:2 }}>
+                  {(bonConfig.prefix || bonConfig.separator) ? (
+                    <Text style={[st.mono, { color:C.muted, fontSize:20, fontWeight:'700' }]}>
+                      {bonConfig.prefix}{bonConfig.separator}
+                    </Text>
+                  ) : null}
+                  <TextInput
+                    value={bonEditValue}
+                    onChangeText={v => {
+                      const digits = v.replace(/\D/g, '');
+                      setBonEditValue(digits);
+                      setBonOverride(true);
+                    }}
+                    onBlur={() => {
+                      if (bonEditValue) {
+                        setBonNo(genBon(parseInt(bonEditValue, 10) || 1, bonConfig));
+                      }
+                      setBonEditing(false);
+                    }}
+                    autoFocus
+                    keyboardType="number-pad"
+                    maxLength={10}
+                    style={[st.mono, { color:C.accent, fontSize:26, fontWeight:'800',
+                      borderBottomWidth:2, borderBottomColor:C.accent,
+                      minWidth:120, paddingVertical:4, textAlign:'center' }]}
+                  />
+                </View>
+              ) : (
+                <Text style={[st.mono, { color:C.accent, fontSize:28, fontWeight:'800', letterSpacing:1.5 }]}>
+                  {bonNo}
+                  {bonOverride && <Text style={{ color:C.muted, fontSize:11 }}> *</Text>}
                 </Text>
-              ) : null}
-              <TextInput
-                value={bonEditValue}
-                onChangeText={v => {
-                  const digits = v.replace(/\D/g, '');
-                  setBonEditValue(digits);
-                  setBonOverride(true);
-                }}
-                onBlur={() => {
-                  if (bonEditValue) {
-                    setBonNo(genBon(parseInt(bonEditValue, 10) || 1, bonConfig));
-                  }
-                  setBonEditing(false);
-                }}
-                autoFocus
-                keyboardType="number-pad"
-                maxLength={10}
-                style={[st.mono, { color:C.accent, fontSize:26, fontWeight:'800',
-                  borderBottomWidth:2, borderBottomColor:C.accent,
-                  minWidth:120, paddingVertical:4, textAlign:'center' }]}
-              />
-            </View>
-          ) : (
-            <Text style={[st.mono, { color:C.accent, fontSize:32, fontWeight:'800', letterSpacing:1.5 }]}>
-              {bonNo}
-              {bonOverride && <Text style={{ color:C.muted, fontSize:11 }}> *edited</Text>}
-            </Text>
-          )}
-        </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleBonNext}
+              style={{ backgroundColor:C.input, borderRadius:10, paddingHorizontal:16, paddingVertical:12 }}>
+              <Text style={{ color:C.text, fontSize:22, fontWeight:'700' }}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
-        {/* Date — FIX 8+9: show formatted date, calendar picker on tap */}
+        {/* Date */}
         <View style={{ marginBottom:14 }}>
           <Text style={st.label}>📅 Tanggal</Text>
-          <TouchableOpacity
-            onPress={() => setShowDatePicker(true)}
-            style={[st.input, { flexDirection:'row', justifyContent:'space-between', alignItems:'center' }]}>
-            <Text style={{ color:C.text, fontSize:16 }}>{fmtDate(date, dateFormat)}</Text>
-            <Text style={{ color:C.muted, fontSize:14 }}>📅</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+            <TouchableOpacity
+              onPress={handleDatePrev}
+              style={{ backgroundColor:C.input, borderRadius:10, paddingHorizontal:16, paddingVertical:14 }}>
+              <Text style={{ color:C.text, fontSize:22, fontWeight:'700' }}>‹</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setShowDatePicker(true)}
+              style={[st.input, { flex:1, flexDirection:'row', justifyContent:'space-between', alignItems:'center' }]}>
+              <Text style={{ color:C.text, fontSize:16 }}>{fmtDate(date, dateFormat)}</Text>
+              <Text style={{ color:C.muted, fontSize:14 }}>📅</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleDateNext}
+              style={{ backgroundColor:C.input, borderRadius:10, paddingHorizontal:16, paddingVertical:14 }}>
+              <Text style={{ color:C.text, fontSize:22, fontWeight:'700' }}>›</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         {showDatePicker && (
           <DateTimePicker
