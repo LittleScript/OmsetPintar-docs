@@ -45,7 +45,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.5.0';
+const APP_VER    = '3.6.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
@@ -705,10 +705,12 @@ function InputScreen({ data, onSave }) {
   const [bonEditing, setBonEditing] = useState(false);
   const [bonEditValue, setBonEditValue] = useState(''); // numeric only during edit
   const [bonOverride, setBonOverride] = useState(false);
-  const [saving, setSaving]       = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
+  const [saving, setSaving]         = useState(false);
+  const [justSaved, setJustSaved]   = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const amtRef = useRef(null);
+  const [suggestDismissed, setSuggestDismissed] = useState(false);
+  const amtRef      = useRef(null);
+  const customerRef = useRef(null);
 
   useEffect(() => {
     if (!bonOverride) setBonNo(genBon(nextSeq, bonConfig));
@@ -769,11 +771,13 @@ function InputScreen({ data, onSave }) {
     setCustomer('');
     setAmount('');
     setNotes('');
+    setSuggestDismissed(false);
     setBonOverride(false);
     setBonEditing(false);
     setSaving(false);
     setTimeout(() => setJustSaved(false), 1500);
-    setTimeout(() => amtRef.current?.focus(), 100);
+    // Alur: simpan bon → langsung kembali ke input nama pelanggan
+    setTimeout(() => customerRef.current?.focus(), 150);
   };
 
   const salesColor = COLORS[salesList.indexOf(sales) % COLORS.length];
@@ -900,14 +904,21 @@ function InputScreen({ data, onSave }) {
         {/* Customer + autocomplete */}
         <View style={{ marginBottom:14 }}>
           <Text style={st.label}>Nama Pelanggan ({sales})</Text>
-          <TextInput value={customer} onChangeText={setCustomer}
+          <TextInput
+            ref={customerRef}
+            value={customer}
+            onChangeText={v => { setCustomer(v); setSuggestDismissed(false); }}
             placeholder={`Pelanggan ${sales}...`} placeholderTextColor={C.muted}
             style={[st.input, customer && { borderColor:salesColor }]}
-            autoCorrect={false} autoCapitalize="words" />
-          {suggests.length > 0 && (
+            autoCorrect={false} autoCapitalize="words"
+            returnKeyType="next"
+            onSubmitEditing={() => amtRef.current?.focus()}
+          />
+          {suggests.length > 0 && !suggestDismissed && (
             <View style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.primary, borderTopWidth:0, borderBottomLeftRadius:12, borderBottomRightRadius:12, overflow:'hidden' }}>
               {suggests.map(sg => (
-                <TouchableOpacity key={sg.name} onPress={() => setCustomer(sg.name)}
+                <TouchableOpacity key={sg.name}
+                  onPress={() => { setCustomer(sg.name); setSuggestDismissed(true); amtRef.current?.focus(); }}
                   style={{ padding:12, borderBottomWidth:1, borderBottomColor:C.border }}>
                   <View style={{ flexDirection:'row', justifyContent:'space-between' }}>
                     <Text style={{ color:C.text, fontSize:14 }}>{sg.name}</Text>
@@ -959,6 +970,7 @@ function DashboardScreen({ data, onYearChange }) {
   const st = getStyles(C);
 
   const { salesList, transactions, activeYear, dateFormat } = data;
+  const [busyMonthFilter, setBusyMonthFilter] = useState(0); // 0 = all, 1-12 = bulan
 
   const activeTxns = useMemo(() =>
     transactions.filter(t => !t.deletedAt), [transactions]);
@@ -990,10 +1002,13 @@ function DashboardScreen({ data, onYearChange }) {
     return { name:m, ...totals, total:mTx.reduce((a,t)=>a+t.amount,0) };
   });
 
-  // Hari tersibuk: hitung omset per hari dalam seminggu (0=Min, 1=Sen, ..., 6=Sab)
+  // Hari tersibuk: hitung omset per hari dalam seminggu, bisa difilter per bulan
   const DAY_LABELS = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+  const busyBaseTxns = busyMonthFilter === 0
+    ? yearTxns
+    : yearTxns.filter(t => parseInt(t.date.slice(5,7), 10) === busyMonthFilter);
   const busyDays = DAY_LABELS.map((lbl, dow) => {
-    const total = yearTxns
+    const total = busyBaseTxns
       .filter(t => new Date(t.date + 'T12:00:00').getDay() === dow)
       .reduce((a, t) => a + t.amount, 0);
     return { label: lbl, total };
@@ -1155,10 +1170,27 @@ function DashboardScreen({ data, onYearChange }) {
       {/* Hari Tersibuk */}
       {yearTotal > 0 && (
         <View style={st.card}>
-          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-            HARI TERSIBUK {activeYear}
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:8 }}>
+            HARI TERSIBUK — {busyMonthFilter === 0 ? `ALL ${activeYear}` : `${MONTHS_F[busyMonthFilter-1]} ${activeYear}`}
           </Text>
-          {busyDays.map((d, i) => {
+          {/* Filter bulan: All + Jan–Des */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
+            {[0,...Array(12).keys().map(i=>i+1)].map(m => {
+              const active = busyMonthFilter === m;
+              return (
+                <TouchableOpacity key={m} onPress={() => setBusyMonthFilter(m)}
+                  style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:8, marginRight:6,
+                    backgroundColor: active ? C.accent : C.input }}>
+                  <Text style={{ color: active ? '#fff' : C.muted, fontSize:11, fontWeight:'700' }}>
+                    {m === 0 ? 'All' : MONTHS[m-1]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {busyBaseTxns.length === 0 ? (
+            <Text style={{ color:C.muted, fontSize:12, textAlign:'center', paddingVertical:8 }}>Belum ada data</Text>
+          ) : busyDays.map((d, i) => {
             const pct = busyMax > 0 ? d.total / busyMax : 0;
             const isBusiest = d.total === busyMax && busyMax > 0;
             return (
@@ -1754,17 +1786,21 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
       const dfmt     = data.dateFormat || 'dd/mm/yyyy';
 
       if (excelChecked.transaksi) {
-        const rows = [...activeTxns]
-          .sort((a,b) => a.date.localeCompare(b.date))
-          .map(t => ({
-            'No. Bon':        t.bonNumber,
-            'Sales':          t.sales,
-            'Tanggal':        fmtDate(t.date, dfmt),
-            'Nama Pelanggan': t.customerName,
-            'Total (Rp)':     t.amount,
-            'Catatan':        t.notes || '',
-          }));
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Transaksi');
+        // Sheet terpisah per sales (max 31 karakter nama sheet Excel)
+        (data.salesList||[]).forEach(s => {
+          const rows = [...activeTxns]
+            .filter(t => t.sales === s)
+            .sort((a,b) => a.date.localeCompare(b.date))
+            .map(t => ({
+              'No. Bon':        t.bonNumber,
+              'Tanggal':        fmtDate(t.date, dfmt),
+              'Nama Pelanggan': t.customerName,
+              'Total (Rp)':     t.amount,
+              'Catatan':        t.notes || '',
+            }));
+          const sheetName = `Txn-${s}`.slice(0, 31);
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{'Info':'Belum ada data'}]), sheetName);
+        });
       }
 
       if (excelChecked.per_sales) {
