@@ -16,7 +16,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, useContext, c
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
-  Alert, Dimensions, Platform, Modal, ActivityIndicator,
+  Alert, Platform, Modal, ActivityIndicator,
   KeyboardAvoidingView, StatusBar, useColorScheme, Image, BackHandler, ToastAndroid,
   Share, AppState,
 } from 'react-native';
@@ -928,19 +928,22 @@ function InputScreen({ data, onSave, dirtyRef }) {
   };
 
   const doSave = async (tx) => {
-    await onSave(tx);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    if (dirtyRef) dirtyRef.current = false;
-    setJustSaved(true);
-    setCustomer('');
-    setAmount('');
-    setNotes('');
-    setSuggestDismissed(false);
-    setBonOverride(false);
-    setBonEditing(false);
-    setSaving(false);
-    setTimeout(() => setJustSaved(false), 1500);
-    setTimeout(() => customerRef.current?.focus(), 150);
+    try {
+      await onSave(tx);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (dirtyRef) dirtyRef.current = false;
+      setJustSaved(true);
+      setCustomer('');
+      setAmount('');
+      setNotes('');
+      setSuggestDismissed(false);
+      setBonOverride(false);
+      setBonEditing(false);
+      setTimeout(() => setJustSaved(false), 1500);
+      setTimeout(() => customerRef.current?.focus(), 150);
+    } finally {
+      setSaving(false); // selalu reset — bahkan jika onSave() throw error
+    }
   };
 
   const handleSave = async () => {
@@ -1929,9 +1932,9 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
   const [backupHour,   setBackupHour]     = useState(23);
 
   useEffect(() => {
-    SecureStore.getItemAsync(GDRIVE_HOUR_KEY).then(v => {
-      if (v !== null) setBackupHour(parseInt(v, 10));
-    });
+    SecureStore.getItemAsync(GDRIVE_HOUR_KEY)
+      .then(v => { if (v !== null) setBackupHour(parseInt(v, 10)); })
+      .catch(() => {}); // fallback ke default 23:00
   }, []);
   const [excelChecked, setExcelChecked]   = useState({ transaksi:true, per_sales:true, bulanan:true, pelanggan:false, ranking:false });
   const [exporting, setExporting]         = useState(false);
@@ -2593,11 +2596,14 @@ function CustomersScreen({ data, onMerge }) {
 
   const handleTypoCheck = () => {
     setTypoLoading(true);
-    const pairs = findSimilarNames(transactions);
-    setTypoPairs(pairs);
-    setDismissedPairs(new Set());
-    setShowTypo(true);
-    setTypoLoading(false);
+    // setTimeout agar React sempat re-render "Mengecek..." sebelum komputasi dimulai
+    setTimeout(() => {
+      const pairs = findSimilarNames(transactions);
+      setTypoPairs(pairs);
+      setDismissedPairs(new Set());
+      setTypoLoading(false);
+      setShowTypo(true);
+    }, 80);
   };
 
   const allCustomers = useMemo(() => {
@@ -3360,7 +3366,7 @@ export default function App() {
           driveEmail={driveEmail}
           driveLastSync={driveLastSync}
           driveSyncing={driveSyncing}
-          onDriveConnect={() => gPromptAsync()}
+          onDriveConnect={() => gRequest && gPromptAsync()}
           onDriveBackup={handleManualDriveBackup}
           onDriveDisconnect={handleDisconnectDrive}
         />
