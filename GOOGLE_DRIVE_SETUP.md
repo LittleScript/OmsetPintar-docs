@@ -36,6 +36,7 @@ Setelah langkah ini selesai, isi GOOGLE_WEB_CLIENT_ID di App.js baris yang ditan
    https://auth.expo.io/@aliangkoko/omsetku
    com.omsetku.app://oauth2redirect/google
    ```
+   (auth.expo.io pakai Expo username: aliangkoko — bukan GitHub username)
 6. **Create**
 7. **COPY Client ID** — bentuknya: `XXXXXXXXXX-xxxx.apps.googleusercontent.com`
 
