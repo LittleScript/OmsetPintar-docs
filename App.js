@@ -1175,7 +1175,7 @@ function DashboardScreen({ data, onYearChange }) {
           </Text>
           {/* Filter bulan: All + Jan–Des */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
-            {[0,...Array(12).keys().map(i=>i+1)].map(m => {
+            {[0,1,2,3,4,5,6,7,8,9,10,11,12].map(m => {
               const active = busyMonthFilter === m;
               return (
                 <TouchableOpacity key={m} onPress={() => setBusyMonthFilter(m)}
