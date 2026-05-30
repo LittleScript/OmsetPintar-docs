@@ -463,21 +463,28 @@ function parseCsvText(text, bonConfig) {
     // Col 1: sales name
     const sales = (f[1]||'').trim().toUpperCase();
     if (!sales || sales === 'SALES') continue;
-    // Col 2: separator (skip)
-    // Col 3: date dd/mm/yyyy
-    const dRaw   = (f[3]||'').trim();
+    // Auto-detect separator column: jika col 2 mengandung '/' → itu tanggal (tidak ada sep col)
+    // Sheet dengan kolom '-' → hasSepCol true → tanggal di col 3
+    // CSV export yang kolom '-' tidak ikut → hasSepCol false → tanggal di col 2
+    const hasSepCol = !(f[2]||'').includes('/');
+    const dateIdx  = hasSepCol ? 3 : 2;
+    const nameIdx  = hasSepCol ? 4 : 3;
+    const amtIdx   = hasSepCol ? 5 : 4;
+    const notesIdx = hasSepCol ? 6 : 5;
+    // Date dd/mm/yyyy
+    const dRaw   = (f[dateIdx]||'').trim();
     const dParts = dRaw.split('/');
     if (dParts.length !== 3) continue;
     const date = `${dParts[2].padStart(4,'0')}-${dParts[1].padStart(2,'0')}-${dParts[0].padStart(2,'0')}`;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-    // Col 4: customer name
-    const customerName = (f[4]||'').trim();
+    // Customer name
+    const customerName = (f[nameIdx]||'').trim();
     if (!customerName) continue;
-    // Col 5: amount — strip all non-digits
-    const amount = parseInt((f[5]||'').replace(/[^\d]/g,''), 10);
+    // Amount — strip semua non-digit (handles "2,399,500" dan "2.399.500")
+    const amount = parseInt((f[amtIdx]||'').replace(/[^\d]/g,''), 10);
     if (!amount || amount <= 0) continue;
-    // Col 6: notes (optional)
-    const notes = (f[6]||'').trim();
+    // Notes (optional)
+    const notes = (f[notesIdx]||'').trim();
     // Generate bon number using current app prefix config
     const bonNumber = genBon(bonSeq, bonConfig);
     rows.push({ bonSeq, bonNumber, sales, date, customerName, amount, notes });
