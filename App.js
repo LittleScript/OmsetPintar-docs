@@ -17,7 +17,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
   StyleSheet, Alert, Dimensions, Platform, Modal, ActivityIndicator,
-  KeyboardAvoidingView, StatusBar, useColorScheme, Image, BackHandler,
+  KeyboardAvoidingView, StatusBar, useColorScheme, Image, BackHandler, ToastAndroid,
 } from 'react-native';
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
@@ -45,7 +45,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.6.0';
+const APP_VER    = '3.7.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
@@ -525,7 +525,8 @@ const KpiCard = ({ label, value, sub, color, style }) => {
     <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.7, textTransform:'uppercase', marginBottom:4 }}>
       {label}
     </Text>
-    <Text style={[st.mono, { color:color||C.text, fontSize:20, fontWeight:'800' }]}>
+    <Text style={[st.mono, { color:color||C.text, fontSize:18, fontWeight:'800' }]}
+      numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.55}>
       {value}
     </Text>
     {sub ? <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{sub}</Text> : null}
@@ -690,7 +691,7 @@ function SetupWizard({ data, onComplete }) {
 }
 
 // ─── INPUT SCREEN ─────────────────────────────────────────────────────────────
-function InputScreen({ data, onSave }) {
+function InputScreen({ data, onSave, dirtyRef }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
 
@@ -711,6 +712,11 @@ function InputScreen({ data, onSave }) {
   const [suggestDismissed, setSuggestDismissed] = useState(false);
   const amtRef      = useRef(null);
   const customerRef = useRef(null);
+
+  // Update dirtyRef saat customer atau amount berubah
+  useEffect(() => {
+    if (dirtyRef) dirtyRef.current = customer.trim().length > 0 || amount.length > 0;
+  }, [customer, amount, dirtyRef]);
 
   useEffect(() => {
     if (!bonOverride) setBonNo(genBon(nextSeq, bonConfig));
@@ -767,6 +773,7 @@ function InputScreen({ data, onSave }) {
     };
     await onSave(tx);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (dirtyRef) dirtyRef.current = false;
     setJustSaved(true);
     setCustomer('');
     setAmount('');
@@ -1067,8 +1074,8 @@ function DashboardScreen({ data, onYearChange }) {
 
       {/* KPIs */}
       <View style={{ flexDirection:'row', gap:8, marginBottom:12 }}>
-        <KpiCard label="Total Omset" value={toShort(yearTotal)} sub={yearCount+' bon'} color={C.accent} />
-        <KpiCard label="Rata-rata"   value={toShort(yearCount>0?Math.round(yearTotal/yearCount):0)} sub="per bon" />
+        <KpiCard label="Total Omset" value={toIdr(yearTotal)} sub={yearCount+' bon'} color={C.accent} />
+        <KpiCard label="Rata-rata"   value={toIdr(yearCount>0?Math.round(yearTotal/yearCount):0)} sub="per bon" />
       </View>
 
       {/* Per-sales breakdown */}
@@ -2414,6 +2421,7 @@ export default function App() {
   const [dbReady,  setDbReady]  = useState(false);
   const [tab,      setTab]      = useState('input');
   const [showSett, setShowSett] = useState(false);
+  const inputDirtyRef = useRef(false); // diisi oleh InputScreen bila ada input belum tersimpan
   const [saveState,setSaveState]= useState('idle');
   const systemScheme = useColorScheme();
   const [themeMode, setThemeMode] = useState('dark');
@@ -2453,18 +2461,34 @@ export default function App() {
     if (fresh) setData(fresh);
   }, []);
 
-  // Konfirmasi keluar — Android back button
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+  // Pindah tab dengan cek unsaved input
+  const handleTabChange = (newTab) => {
+    if (tab === 'input' && newTab !== 'input' && inputDirtyRef.current) {
       Alert.alert(
-        'Keluar OmsetKu?',
-        'Yakin ingin menutup aplikasi?',
+        'Input Belum Tersimpan',
+        'Ada nama / nominal yang belum disimpan. Yakin mau pindah?',
         [
-          { text: 'Batal', style: 'cancel', onPress: () => {} },
-          { text: 'Keluar', style: 'destructive', onPress: () => BackHandler.exitApp() },
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Pindah Saja', style: 'destructive', onPress: () => setTab(newTab) },
         ]
       );
-      return true; // prevent default back behavior
+      return;
+    }
+    setTab(newTab);
+  };
+
+  // Double back press to exit — tekan 2x dalam 2 detik
+  const backPressedOnce = useRef(false);
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (backPressedOnce.current) {
+        BackHandler.exitApp();
+        return true;
+      }
+      backPressedOnce.current = true;
+      ToastAndroid.show('Tekan sekali lagi untuk keluar', ToastAndroid.SHORT);
+      setTimeout(() => { backPressedOnce.current = false; }, 2000);
+      return true;
     });
     return () => sub.remove();
   }, []);
@@ -2612,7 +2636,7 @@ export default function App() {
 
       {/* Screen */}
       <View style={st.flex1}>
-        {tab==='input'     && <InputScreen data={data} onSave={handleSave} />}
+        {tab==='input'     && <InputScreen data={data} onSave={handleSave} dirtyRef={inputDirtyRef} />}
         {tab==='dashboard' && <DashboardScreen data={data} onYearChange={handleYearChange} />}
         {tab==='riwayat'   && <HistoryScreen data={data} onDelete={handleDelete} onEdit={handleEdit} onRestore={handleRestore} />}
         {tab==='ranking'   && <RankingScreen data={data} />}
@@ -2622,7 +2646,7 @@ export default function App() {
       {/* Bottom tabs */}
       <View style={{ flexDirection:'row', backgroundColor:C.card, borderTopWidth:1, borderTopColor:C.border, paddingBottom: Platform.OS==='ios'?16:0 }}>
         {TABS.map(t => (
-          <TouchableOpacity key={t.id} onPress={() => setTab(t.id)}
+          <TouchableOpacity key={t.id} onPress={() => handleTabChange(t.id)}
             style={{ flex:1, alignItems:'center', paddingVertical:10 }}>
             <Text style={{ fontSize:18, color:tab===t.id?C.accent:C.muted,
               transform:[{scale: tab===t.id?1.2:1}] }}>{t.icon}</Text>
