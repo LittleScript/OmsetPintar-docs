@@ -53,7 +53,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.9.0';
+const APP_VER    = '4.0.0';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -62,6 +62,7 @@ const GOOGLE_WEB_CLIENT_ID = '846894493859-vl3v947mucd6chu7tm0agi7kbitpb27a.apps
 const GDRIVE_TOKEN_KEY      = 'gdrive_access_token';
 const GDRIVE_EMAIL_KEY      = 'gdrive_user_email';
 const GDRIVE_LAST_BACKUP_KEY= 'gdrive_last_backup';
+const GDRIVE_HOUR_KEY       = 'gdrive_backup_hour'; // jam backup: 0–23, default 23
 const GDRIVE_TASK_NAME      = 'OMSETKU_GDRIVE_BACKUP';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -114,18 +115,29 @@ async function uploadToDrive(accessToken, payload) {
   if (!uploadRes.ok) throw new Error(`Drive upload failed: ${uploadRes.status}`);
 }
 
-// Background task — cek setiap 1 jam, backup jika sudah > 24 jam
+// Background task — cek setiap 15 menit, backup pada jam yang dipilih user
 TaskManager.defineTask(GDRIVE_TASK_NAME, async () => {
   try {
     const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
     if (!token) return BackgroundFetch.BackgroundFetchResult.NoData;
+
+    // Cek jam backup yang dipilih user (default 23:00)
+    const prefHour = parseInt(await SecureStore.getItemAsync(GDRIVE_HOUR_KEY) || '23', 10);
+    const now      = new Date();
+    // Jalankan hanya pada jam yang dipilih (dalam window 15 menit pertama)
+    if (now.getHours() !== prefHour || now.getMinutes() >= 15) {
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+
+    // Cek apakah sudah backup hari ini
     const last = await SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY);
     if (last && Date.now() - parseInt(last) < 23 * 60 * 60 * 1000) {
       return BackgroundFetch.BackgroundFetchResult.NoData;
     }
+
     const db      = await getDb();
     const appData = await assembleData(db);
-    await uploadToDrive(token, { schemaVersion: SCHEMA_VER, appVersion: APP_VER, exportedAt: new Date().toISOString(), data: appData });
+    await uploadToDrive(token, { schemaVersion: SCHEMA_VER, appVersion: APP_VER, exportedAt: now.toISOString(), data: appData });
     await SecureStore.setItemAsync(GDRIVE_LAST_BACKUP_KEY, String(Date.now()));
     return BackgroundFetch.BackgroundFetchResult.NewData;
   } catch(e) {
@@ -468,6 +480,15 @@ async function deactivateSales(db, name) {
   await db.runAsync(`UPDATE sales SET active=0 WHERE name=?`, [name]);
 }
 
+async function mergeCustomerName(db, oldName, newName, sales) {
+  const newNorm = getNorm(newName);
+  await db.runAsync(
+    `UPDATE transactions SET customer_name=?, customer_norm=?, updated_at=?
+     WHERE customer_norm=? AND sales_name=? AND deleted_at IS NULL`,
+    [newName.trim(), newNorm, new Date().toISOString(), getNorm(oldName), sales]
+  );
+}
+
 // ─── ANALYTICS ────────────────────────────────────────────────────────────────
 function getWeekBounds(refDate) {
   const mon = getMondayOfWeek(refDate);
@@ -521,6 +542,65 @@ function getAutocomplete(query, txns, sales, limit=5) {
   const L2 = all.filter(c => !L1.includes(c) && ini(c.name).startsWith(q));
   const L3 = all.filter(c => !L1.includes(c) && !L2.includes(c) && c.name.toLowerCase().includes(q));
   return [...L1,...L2,...L3].sort((a,b)=>b.count-a.count).slice(0,limit);
+}
+
+// ─── TYPO DETECTION ───────────────────────────────────────────────────────────
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m+1 }, (_, i) => {
+    const row = [i];
+    for (let j = 1; j <= n; j++) row[j] = i === 0 ? j : 0;
+    return row;
+  });
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i-1] === b[j-1]
+        ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    }
+  }
+  return dp[m][n];
+}
+
+function findSimilarNames(transactions) {
+  // Kumpulkan nama unik per sales
+  const nameMap = {};
+  transactions
+    .filter(t => !t.deletedAt)
+    .forEach(t => {
+      const key = `${t.sales}|||${getNorm(t.customerName)}`;
+      if (!nameMap[key]) nameMap[key] = { name: t.customerName, sales: t.sales, count: 0 };
+      nameMap[key].count++;
+    });
+
+  const entries = Object.values(nameMap);
+  const pairs   = [];
+  const seen    = new Set();
+
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const a = entries[i], b = entries[j];
+      if (a.sales !== b.sales) continue; // hanya dalam 1 sales
+
+      const normA = getNorm(a.name), normB = getNorm(b.name);
+      const pairKey = [normA, normB].sort().join('|||');
+      if (seen.has(pairKey)) continue;
+
+      const dist   = levenshtein(normA, normB);
+      const maxLen = Math.max(normA.length, normB.length);
+      const threshold = maxLen <= 4 ? 1 : 2; // nama pendek: toleransi 1, panjang: 2
+
+      if (dist > 0 && dist <= threshold) {
+        seen.add(pairKey);
+        pairs.push({
+          nameA: a.name, countA: a.count,
+          nameB: b.name, countB: b.count,
+          sales: a.sales, distance: dist,
+        });
+      }
+    }
+  }
+  return pairs;
 }
 
 // ─── CSV IMPORT PARSER ────────────────────────────────────────────────────────
@@ -1812,6 +1892,13 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
   const [importPreview, setImportPreview] = useState(null);
   const [importing, setImporting]         = useState(false);
   const [showExcelMenu, setShowExcelMenu] = useState(false);
+  const [backupHour,   setBackupHour]     = useState(23);
+
+  useEffect(() => {
+    SecureStore.getItemAsync(GDRIVE_HOUR_KEY).then(v => {
+      if (v !== null) setBackupHour(parseInt(v, 10));
+    });
+  }, []);
   const [excelChecked, setExcelChecked]   = useState({ transaksi:true, per_sales:true, bulanan:true, pelanggan:false, ranking:false });
   const [exporting, setExporting]         = useState(false);
   const [company, setCompany]   = useState(companyName||'');
@@ -2115,12 +2202,40 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
                 </View>
                 <TouchableOpacity onPress={onDriveBackup} disabled={driveSyncing}
                   style={{ backgroundColor:C.success+'22', borderWidth:1.5, borderColor:C.success,
-                    borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8,
+                    borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:10,
                     opacity: driveSyncing ? 0.6 : 1 }}>
                   <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>
                     {driveSyncing ? '☁️ Mengunggah...' : '☁️ Backup Sekarang'}
                   </Text>
                 </TouchableOpacity>
+                {/* Jam backup otomatis */}
+                <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between',
+                  backgroundColor:C.input, borderRadius:12, padding:12, marginBottom:10 }}>
+                  <Text style={{ color:C.muted, fontSize:12 }}>⏰ Backup otomatis jam:</Text>
+                  <View style={{ flexDirection:'row', alignItems:'center', gap:6 }}>
+                    <TouchableOpacity
+                      onPress={async () => {
+                        const h = backupHour === 0 ? 23 : backupHour - 1;
+                        setBackupHour(h);
+                        await SecureStore.setItemAsync(GDRIVE_HOUR_KEY, String(h));
+                      }}
+                      style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
+                      <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>‹</Text>
+                    </TouchableOpacity>
+                    <Text style={[{ color:C.accent, fontSize:16, fontWeight:'800', minWidth:52, textAlign:'center' }]}>
+                      {String(backupHour).padStart(2,'0')}:00
+                    </Text>
+                    <TouchableOpacity
+                      onPress={async () => {
+                        const h = backupHour === 23 ? 0 : backupHour + 1;
+                        setBackupHour(h);
+                        await SecureStore.setItemAsync(GDRIVE_HOUR_KEY, String(h));
+                      }}
+                      style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
+                      <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>›</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
                 <TouchableOpacity onPress={onDriveDisconnect}
                   style={{ backgroundColor:C.danger+'11', borderRadius:14, paddingVertical:10, alignItems:'center' }}>
                   <Text style={{ color:C.danger, fontSize:12, fontWeight:'700' }}>Putus Koneksi</Text>
@@ -2429,14 +2544,27 @@ function getCustomerList(transactions, salesFilter) {
   );
 }
 
-function CustomersScreen({ data }) {
+function CustomersScreen({ data, onMerge }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
   const { salesList, transactions, dateFormat } = data;
   const [salesF, setSalesF]       = useState('ALL');
   const [search, setSearch]       = useState('');
-  const [sortBy, setSortBy]       = useState('nama'); // 'nama' | 'total' | 'terbaru'
+  const [sortBy, setSortBy]       = useState('nama');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [typoPairs,   setTypoPairs]   = useState([]);
+  const [showTypo,    setShowTypo]    = useState(false);
+  const [typoLoading, setTypoLoading] = useState(false);
+  const [dismissedPairs, setDismissedPairs] = useState(new Set());
+
+  const handleTypoCheck = () => {
+    setTypoLoading(true);
+    const pairs = findSimilarNames(transactions);
+    setTypoPairs(pairs);
+    setDismissedPairs(new Set());
+    setShowTypo(true);
+    setTypoLoading(false);
+  };
 
   const allCustomers = useMemo(() => {
     const list = getCustomerList(transactions, salesF);
@@ -2525,6 +2653,14 @@ function CustomersScreen({ data }) {
         <Text style={{ color:C.muted, fontSize:11, marginBottom:6 }}>
           {filtered.length} pelanggan
         </Text>
+        {/* Tombol cek typo */}
+        <TouchableOpacity onPress={handleTypoCheck}
+          style={{ flexDirection:'row', alignItems:'center', gap:6, alignSelf:'flex-start',
+            backgroundColor:C.warning+'22', borderRadius:8, paddingHorizontal:10, paddingVertical:5, marginBottom:4 }}>
+          <Text style={{ color:C.warning, fontSize:11, fontWeight:'700' }}>
+            {typoLoading ? 'Mengecek...' : '🔍 Cek Typo Nama'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* List — A-Z grouped (nama) atau flat (total/terbaru) */}
@@ -2563,6 +2699,106 @@ function CustomersScreen({ data }) {
             </View>
           )}
         />
+      )}
+
+      {/* Typo Detection Modal */}
+      {showTypo && (
+        <Modal visible animationType="slide" onRequestClose={() => setShowTypo(false)}>
+          <View style={[st.container, { paddingTop: Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
+            <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between',
+              paddingHorizontal:16, paddingVertical:12, borderBottomWidth:1, borderBottomColor:C.border }}>
+              <Text style={{ color:C.text, fontSize:17, fontWeight:'800' }}>🔍 Cek Typo Nama</Text>
+              <TouchableOpacity onPress={() => setShowTypo(false)}
+                style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:12, paddingVertical:6 }}>
+                <Text style={{ color:C.muted }}>✕ Tutup</Text>
+              </TouchableOpacity>
+            </View>
+
+            {typoPairs.filter(p => !dismissedPairs.has(`${p.nameA}|||${p.nameB}`)).length === 0 ? (
+              <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
+                <Text style={{ fontSize:48, marginBottom:16 }}>✅</Text>
+                <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>Tidak ada typo terdeteksi</Text>
+                <Text style={{ color:C.muted, fontSize:13, marginTop:8, textAlign:'center', paddingHorizontal:32 }}>
+                  Semua nama pelanggan tampak unik dan berbeda
+                </Text>
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={{ padding:16, paddingBottom:40 }}>
+                <Text style={{ color:C.muted, fontSize:12, marginBottom:16 }}>
+                  Ditemukan {typoPairs.filter(p => !dismissedPairs.has(`${p.nameA}|||${p.nameB}`)).length} pasangan nama yang mungkin sama.
+                  Pilih nama yang benar untuk mengganti semua transaksi.
+                </Text>
+                {typoPairs
+                  .filter(p => !dismissedPairs.has(`${p.nameA}|||${p.nameB}`))
+                  .map((pair, idx) => {
+                    const salesColor = COLORS[salesList.indexOf(pair.sales) % COLORS.length] || C.primary;
+                    return (
+                      <View key={idx} style={[st.card, { marginBottom:12 }]}>
+                        <View style={{ flexDirection:'row', alignItems:'center', gap:6, marginBottom:12 }}>
+                          <View style={{ width:8, height:8, borderRadius:4, backgroundColor:salesColor }} />
+                          <Text style={{ color:salesColor, fontSize:11, fontWeight:'700' }}>{pair.sales}</Text>
+                          <Text style={{ color:C.muted, fontSize:10 }}>• jarak {pair.distance} karakter</Text>
+                        </View>
+                        <View style={{ flexDirection:'row', gap:8, marginBottom:12 }}>
+                          {/* Nama A */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              Alert.alert(
+                                'Ganti ke nama ini?',
+                                `Semua "${pair.nameB}" (${pair.countB} bon) akan diganti menjadi "${pair.nameA}"`,
+                                [
+                                  { text:'Batal', style:'cancel' },
+                                  { text:'Ya, Ganti', onPress: async () => {
+                                    await onMerge(pair.nameB, pair.nameA, pair.sales);
+                                    setDismissedPairs(prev => new Set([...prev, `${pair.nameA}|||${pair.nameB}`]));
+                                  }},
+                                ]
+                              );
+                            }}
+                            style={{ flex:1, backgroundColor:C.primary+'22', borderWidth:1.5,
+                              borderColor:C.primary, borderRadius:12, padding:12, alignItems:'center' }}>
+                            <Text style={{ color:C.primary, fontSize:15, fontWeight:'800' }}>{pair.nameA}</Text>
+                            <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{pair.countA} bon</Text>
+                            <Text style={{ color:C.primary, fontSize:10, marginTop:4, fontWeight:'700' }}>Pakai ini ✓</Text>
+                          </TouchableOpacity>
+                          <View style={{ alignItems:'center', justifyContent:'center', paddingHorizontal:4 }}>
+                            <Text style={{ color:C.muted, fontSize:18 }}>↔</Text>
+                          </View>
+                          {/* Nama B */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              Alert.alert(
+                                'Ganti ke nama ini?',
+                                `Semua "${pair.nameA}" (${pair.countA} bon) akan diganti menjadi "${pair.nameB}"`,
+                                [
+                                  { text:'Batal', style:'cancel' },
+                                  { text:'Ya, Ganti', onPress: async () => {
+                                    await onMerge(pair.nameA, pair.nameB, pair.sales);
+                                    setDismissedPairs(prev => new Set([...prev, `${pair.nameA}|||${pair.nameB}`]));
+                                  }},
+                                ]
+                              );
+                            }}
+                            style={{ flex:1, backgroundColor:C.accent+'22', borderWidth:1.5,
+                              borderColor:C.accent, borderRadius:12, padding:12, alignItems:'center' }}>
+                            <Text style={{ color:C.accent, fontSize:15, fontWeight:'800' }}>{pair.nameB}</Text>
+                            <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{pair.countB} bon</Text>
+                            <Text style={{ color:C.accent, fontSize:10, marginTop:4, fontWeight:'700' }}>Pakai ini ✓</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {/* Abaikan */}
+                        <TouchableOpacity
+                          onPress={() => setDismissedPairs(prev => new Set([...prev, `${pair.nameA}|||${pair.nameB}`]))}
+                          style={{ backgroundColor:C.input, borderRadius:8, paddingVertical:8, alignItems:'center' }}>
+                          <Text style={{ color:C.muted, fontSize:12 }}>Bukan typo — Abaikan</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+              </ScrollView>
+            )}
+          </View>
+        </Modal>
       )}
 
       {/* Customer Detail Modal */}
@@ -2676,7 +2912,7 @@ const TABS = [
   { id:'dashboard',  icon:'◈', label:'Dashboard'  },
   { id:'riwayat',    icon:'☰', label:'Riwayat'    },
   { id:'ranking',    icon:'★', label:'Ranking'    },
-  { id:'pelanggan',  icon:'👥', label:'Pelanggan'  },
+  { id:'pelanggan',  icon:'◉',  label:'Pelanggan'  },
 ];
 
 export default function App() {
@@ -2763,7 +2999,7 @@ export default function App() {
           setDriveEmail(info.email || '');
           // Register background task
           await BackgroundFetch.registerTaskAsync(GDRIVE_TASK_NAME, {
-            minimumInterval: 60 * 60, // 1 jam
+            minimumInterval: 15 * 60, // 15 menit (minimum Android)
             stopOnTerminate: false,
             startOnBoot: true,
           }).catch(() => {});
@@ -2931,6 +3167,11 @@ export default function App() {
     await reloadData();
   }, [reloadData]);
 
+  const handleMergeCustomer = useCallback(async (oldName, newName, sales) => {
+    await mergeCustomerName(dbRef.current, oldName, newName, sales);
+    await reloadData();
+  }, [reloadData]);
+
   const handleImportCsv = useCallback(async (rows) => {
     const db = dbRef.current;
     const now = new Date().toISOString();
@@ -3058,7 +3299,7 @@ export default function App() {
         {tab==='dashboard' && <DashboardScreen data={data} onYearChange={handleYearChange} />}
         {tab==='riwayat'   && <HistoryScreen data={data} onDelete={handleDelete} onEdit={handleEdit} onRestore={handleRestore} />}
         {tab==='ranking'   && <RankingScreen data={data} />}
-        {tab==='pelanggan' && <CustomersScreen data={data} />}
+        {tab==='pelanggan' && <CustomersScreen data={data} onMerge={handleMergeCustomer} />}
       </View>
 
       {/* Bottom tabs */}
