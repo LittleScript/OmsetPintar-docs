@@ -24,6 +24,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
+import * as XLSX from 'xlsx';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -44,7 +45,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.4.0';
+const APP_VER    = '3.5.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
@@ -1101,18 +1102,19 @@ function DashboardScreen({ data, onYearChange }) {
           <View style={{ flexDirection:'row', alignItems:'flex-end', height:80, gap:2 }}>
             {monthly.map((m, i) => {
               const maxH = monthly.reduce((mx, x) => Math.max(mx, x.total), 0);
-              const barH = maxH > 0 ? Math.max((m.total / maxH) * 76, m.total > 0 ? 4 : 0) : 0;
               return (
                 <View key={i} style={{ flex:1, alignItems:'center', justifyContent:'flex-end', height:80 }}>
-                  <View style={{ width:'100%', height:barH, borderRadius:3, overflow:'hidden' }}>
-                    {salesList.map((s, si) => {
-                      const sH = m.total > 0 ? ((m[s]||0) / m.total) * barH : 0;
-                      return sH > 0 ? (
-                        <View key={s} style={{ width:'100%', height:sH, backgroundColor:COLORS[si%COLORS.length] }} />
-                      ) : null;
-                    })}
-                    {salesList.length === 0 && m.total > 0 && (
-                      <View style={{ flex:1, backgroundColor:C.primary }} />
+                  {/* Bar kiri-kanan per sales */}
+                  <View style={{ flexDirection:'row', alignItems:'flex-end', width:'100%', gap:1 }}>
+                    {salesList.length > 0 ? salesList.map((s, si) => {
+                      const sTotal = m[s] || 0;
+                      const barH   = maxH > 0 ? Math.max((sTotal / maxH) * 72, sTotal > 0 ? 3 : 0) : 0;
+                      return (
+                        <View key={s} style={{ flex:1, height:barH, backgroundColor:COLORS[si%COLORS.length], borderRadius:2 }} />
+                      );
+                    }) : (
+                      <View style={{ flex:1, height:maxH>0?Math.max((m.total/maxH)*72,m.total>0?3:0):0,
+                        backgroundColor:C.primary, borderRadius:2 }} />
                     )}
                   </View>
                   <Text style={{ color:C.muted, fontSize:7, marginTop:3 }}>{m.name}</Text>
@@ -1206,8 +1208,10 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
   }, [transactions, salesF, search]);
 
   const openEdit = (tx) => {
+    // Pisahkan bagian numerik dari bon number untuk editing
+    const numPart = (tx.bonNumber.match(/(\d+)$/) || ['1'])[0];
     setEditForm({
-      bonNumber:    tx.bonNumber,
+      bonNumOnly:   numPart.replace(/^0+/, '') || '1',
       sales:        tx.sales,
       customerName: tx.customerName,
       amount:       String(tx.amount),
@@ -1218,11 +1222,13 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
   };
 
   const saveEdit = async () => {
-    const amt = parseInt(editForm.amount.replace(/\D/g,''))||0;
+    const amt    = parseInt((editForm.amount||'').replace(/\D/g,''))||0;
+    const bonSeq = parseInt(editForm.bonNumOnly, 10) || 1;
+    const bonNumber = genBon(bonSeq, data.bonConfig);
     if (!editForm.customerName.trim() || amt<=0) {
       Alert.alert('','Nama dan nominal harus diisi'); return;
     }
-    await onEdit(editTx.id, { ...editForm, amount: amt });
+    await onEdit(editTx.id, { ...editForm, bonNumber, amount: amt });
     setEditTx(null);
   };
 
@@ -1325,8 +1331,26 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
               <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:16 }}>
                 ✎  Edit Transaksi
               </Text>
+              {/* Nomor Bon — prefix static + angka saja */}
+              <View style={{ marginBottom:14 }}>
+                <Text style={st.label}>Nomor Bon</Text>
+                <View style={[st.input, { flexDirection:'row', alignItems:'center', gap:2 }]}>
+                  {(data.bonConfig?.prefix || data.bonConfig?.separator) ? (
+                    <Text style={[st.mono, { color:C.muted, fontSize:16, fontWeight:'700' }]}>
+                      {data.bonConfig.prefix}{data.bonConfig.separator}
+                    </Text>
+                  ) : null}
+                  <TextInput
+                    value={editForm.bonNumOnly||''}
+                    onChangeText={v => setEditForm(f=>({...f, bonNumOnly:v.replace(/\D/g,'')}))}
+                    keyboardType="number-pad"
+                    maxLength={10}
+                    placeholderTextColor={C.muted}
+                    style={[st.mono, { color:C.accent, fontSize:18, fontWeight:'800', flex:1, padding:0 }]}
+                  />
+                </View>
+              </View>
               {[
-                ['Nomor Bon','bonNumber','default'],
                 ['Nama Pelanggan','customerName','words'],
                 ['Nominal (Rp)','amount','number-pad'],
                 ['Catatan','notes','default'],
@@ -1458,22 +1482,37 @@ function RankingScreen({ data }) {
   const [period, setPeriod]           = useState('year');
   const [rankYear, setRankYear]       = useState(new Date().getFullYear());
   const [rankMonth, setRankMonth]     = useState(new Date().getMonth()+1);
+  const [rankDate, setRankDate]       = useState(todayStr()); // untuk navigasi hari & minggu
 
   const activeTxns = useMemo(() =>
     transactions.filter(t => !t.deletedAt), [transactions]);
 
   const ranked = useMemo(() => {
-    const filtered = filterByPeriod(activeTxns, period, rankYear, rankMonth);
+    let filtered;
+    if (period === 'today') {
+      filtered = activeTxns.filter(t => t.date === rankDate);
+    } else if (period === 'week') {
+      const { mon, sun } = getWeekBounds(rankDate);
+      filtered = activeTxns.filter(t => t.date >= mon && t.date <= sun);
+    } else {
+      filtered = filterByPeriod(activeTxns, period, rankYear, rankMonth);
+    }
     return getRanking(filtered, activeSales);
-  }, [activeTxns, activeSales, period, rankYear, rankMonth]);
+  }, [activeTxns, activeSales, period, rankYear, rankMonth, rankDate]);
+
+  const shiftDate = (days) => {
+    const d = new Date(rankDate + 'T12:00:00');
+    d.setDate(d.getDate() + days);
+    setRankDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+  };
 
   const salesColor = COLORS[salesList.indexOf(activeSales) % COLORS.length] || C.primary;
   const medals = ['🥇','🥈','🥉'];
 
   const periodLabel = () => {
-    if (period==='today') return `Hari Ini, ${fmtDate(todayStr(), dateFormat)}`;
+    if (period==='today') return fmtDate(rankDate, dateFormat);
     if (period==='week') {
-      const { mon, sun } = getWeekBounds(todayStr());
+      const { mon, sun } = getWeekBounds(rankDate);
       return `${fmtDate(mon,dateFormat)} – ${fmtDate(sun,dateFormat)}`;
     }
     if (period==='month') return `${MONTHS_F[rankMonth-1]} ${rankYear}`;
@@ -1498,28 +1537,30 @@ function RankingScreen({ data }) {
           ))}
         </View>
 
-        {/* Year/month navigation */}
-        {(period==='year'||period==='month') && (
-          <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:C.input, borderRadius:10, padding:8, marginBottom:10 }}>
-            <TouchableOpacity onPress={() => {
-              if (period==='month') {
-                if (rankMonth===1) { setRankMonth(12); setRankYear(y=>y-1); }
-                else setRankMonth(m=>m-1);
-              } else setRankYear(y=>y-1);
-            }} style={{ width:32, height:32, backgroundColor:C.card, borderRadius:8, alignItems:'center', justifyContent:'center' }}>
-              <Text style={{ color:C.text, fontSize:18 }}>‹</Text>
-            </TouchableOpacity>
-            <Text style={{ color:C.text, fontWeight:'800', fontSize:14 }}>{periodLabel()}</Text>
-            <TouchableOpacity onPress={() => {
-              if (period==='month') {
-                if (rankMonth===12) { setRankMonth(1); setRankYear(y=>y+1); }
-                else setRankMonth(m=>m+1);
-              } else setRankYear(y=>y+1);
-            }} style={{ width:32, height:32, backgroundColor:C.card, borderRadius:8, alignItems:'center', justifyContent:'center' }}>
-              <Text style={{ color:C.text, fontSize:18 }}>›</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* Navigasi periode — semua 4 mode punya ‹ › */}
+        <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:C.input, borderRadius:10, padding:8, marginBottom:10 }}>
+          <TouchableOpacity onPress={() => {
+            if (period==='today')  shiftDate(-1);
+            else if (period==='week')  shiftDate(-7);
+            else if (period==='month') {
+              if (rankMonth===1) { setRankMonth(12); setRankYear(y=>y-1); }
+              else setRankMonth(m=>m-1);
+            } else setRankYear(y=>y-1);
+          }} style={{ width:32, height:32, backgroundColor:C.card, borderRadius:8, alignItems:'center', justifyContent:'center' }}>
+            <Text style={{ color:C.text, fontSize:18 }}>‹</Text>
+          </TouchableOpacity>
+          <Text style={{ color:C.text, fontWeight:'800', fontSize:13, flex:1, textAlign:'center' }}>{periodLabel()}</Text>
+          <TouchableOpacity onPress={() => {
+            if (period==='today')  shiftDate(1);
+            else if (period==='week')  shiftDate(7);
+            else if (period==='month') {
+              if (rankMonth===12) { setRankMonth(1); setRankYear(y=>y+1); }
+              else setRankMonth(m=>m+1);
+            } else setRankYear(y=>y+1);
+          }} style={{ width:32, height:32, backgroundColor:C.card, borderRadius:8, alignItems:'center', justifyContent:'center' }}>
+            <Text style={{ color:C.text, fontSize:18 }}>›</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Sales tabs */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -1598,6 +1639,9 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
   const [themeMode, setThemeMode]= useState(data.themeMode||'dark');
   const [importPreview, setImportPreview] = useState(null);
   const [importing, setImporting]         = useState(false);
+  const [showExcelMenu, setShowExcelMenu] = useState(false);
+  const [excelChecked, setExcelChecked]   = useState({ transaksi:true, per_sales:true, bulanan:true, pelanggan:false, ranking:false });
+  const [exporting, setExporting]         = useState(false);
   const [company, setCompany]   = useState(companyName||'');
   const [prefix,  setPrefix]    = useState(bonConfig?.prefix||'INV');
   const [sep,     setSep]       = useState(bonConfig?.separator||'-');
@@ -1699,6 +1743,95 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
     }
   };
 
+  const handleExportExcel = async () => {
+    if (!Object.values(excelChecked).some(Boolean)) {
+      Alert.alert('', 'Pilih minimal 1 sheet untuk diexport'); return;
+    }
+    try {
+      setExporting(true);
+      const wb       = XLSX.utils.book_new();
+      const activeTxns = (data.transactions||[]).filter(t => !t.deletedAt);
+      const dfmt     = data.dateFormat || 'dd/mm/yyyy';
+
+      if (excelChecked.transaksi) {
+        const rows = [...activeTxns]
+          .sort((a,b) => a.date.localeCompare(b.date))
+          .map(t => ({
+            'No. Bon':        t.bonNumber,
+            'Sales':          t.sales,
+            'Tanggal':        fmtDate(t.date, dfmt),
+            'Nama Pelanggan': t.customerName,
+            'Total (Rp)':     t.amount,
+            'Catatan':        t.notes || '',
+          }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Transaksi');
+      }
+
+      if (excelChecked.per_sales) {
+        const rows = (data.salesList||[]).map(s => {
+          const sTx = activeTxns.filter(t => t.sales === s);
+          return { 'Sales': s, 'Jumlah Bon': sTx.length, 'Total Omset (Rp)': sTx.reduce((a,t)=>a+t.amount,0) };
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Per Sales');
+      }
+
+      if (excelChecked.bulanan) {
+        const yr   = data.activeYear || new Date().getFullYear();
+        const rows = MONTHS_F.map((month, i) => {
+          const mo  = String(i+1).padStart(2,'0');
+          const mTx = activeTxns.filter(t => t.date.slice(0,7) === `${yr}-${mo}`);
+          const row = { 'Bulan': month, 'Total (Rp)': mTx.reduce((a,t)=>a+t.amount,0) };
+          (data.salesList||[]).forEach(s => { row[s] = mTx.filter(t=>t.sales===s).reduce((a,t)=>a+t.amount,0); });
+          return row;
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), `Bulanan ${yr}`);
+      }
+
+      if (excelChecked.pelanggan) {
+        const custMap = {};
+        activeTxns.forEach(t => {
+          const key = `${t.sales}|||${getNorm(t.customerName)}`;
+          if (!custMap[key]) custMap[key] = { name:t.customerName, sales:t.sales, count:0, total:0, last:'' };
+          custMap[key].count++;
+          custMap[key].total += t.amount;
+          if (t.date > custMap[key].last) custMap[key].last = t.date;
+        });
+        const rows = Object.values(custMap)
+          .sort((a,b) => a.name.localeCompare(b.name,'id'))
+          .map((c, i) => ({
+            'No': i+1, 'Nama Pelanggan': c.name, 'Sales': c.sales,
+            'Jumlah Bon': c.count, 'Total Belanja (Rp)': c.total,
+            'Terakhir': fmtDate(c.last, dfmt),
+          }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Pelanggan');
+      }
+
+      if (excelChecked.ranking) {
+        const rows = [];
+        (data.salesList||[]).forEach(s => {
+          getRanking(activeTxns, s).forEach((r, i) => {
+            rows.push({ 'Rank':i+1, 'Sales':s, 'Nama':r.name, 'Jumlah Bon':r.count, 'Total (Rp)':r.total, 'Terakhir':fmtDate(r.last,dfmt) });
+          });
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Ranking');
+      }
+
+      const base64   = XLSX.write(wb, { type:'base64', bookType:'xlsx' });
+      const filename = `omsetku-${todayStr()}.xlsx`;
+      const uri      = FileSystem.documentDirectory + filename;
+      await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+      await Sharing.shareAsync(uri, {
+        mimeType:    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: 'Export Excel OmsetKu',
+      });
+      setShowExcelMenu(false);
+    } catch(e) {
+      Alert.alert('Export Gagal', String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
       <View style={[st.container, { paddingTop: Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
@@ -1794,8 +1927,12 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
               style={{ backgroundColor:C.primary+'18', borderWidth:1.5, borderColor:C.primary, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10 }}>
               <Text style={{ color:C.primary, fontSize:14, fontWeight:'800' }}>📥  Import dari CSV (Google Sheets)</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowExcelMenu(true)}
+              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10 }}>
+              <Text style={{ color:C.success, fontSize:14, fontWeight:'800' }}>📊  Export ke Excel (.xlsx)</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={handleExport} style={[btnStyle(C.input), {marginBottom:10}]}>
-              <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>📤  Export Backup</Text>
+              <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>📤  Export Backup (JSON)</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={handleReset} style={btnStyle(C.danger+'33')}>
               <Text style={{ color:C.danger, fontSize:14, fontWeight:'700' }}>🗑  Reset Semua Data</Text>
@@ -1829,6 +1966,57 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
           </Text>
         </ScrollView>
       </View>
+
+      {/* ── Excel Export Checklist Modal ── */}
+      {showExcelMenu && (
+        <Modal visible animationType="slide" transparent onRequestClose={() => !exporting && setShowExcelMenu(false)}>
+          <View style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.65)' }}>
+            <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, paddingBottom:36 }}>
+              <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:6 }}>📊 Export ke Excel</Text>
+              <Text style={{ color:C.muted, fontSize:12, marginBottom:16 }}>Pilih sheet yang ingin diexport dalam 1 file .xlsx</Text>
+              {[
+                { id:'transaksi', label:'📋 Semua Transaksi',     desc:'Seluruh bon aktif lengkap' },
+                { id:'per_sales', label:'👤 Rekap per Sales',      desc:'Total omset & bon per sales' },
+                { id:'bulanan',   label:'📅 Rekap Bulanan',        desc:`Omset per bulan tahun ${data.activeYear||new Date().getFullYear()}` },
+                { id:'pelanggan', label:'👥 Daftar Pelanggan',     desc:'Semua pelanggan & total belanja' },
+                { id:'ranking',   label:'🏆 Ranking Pelanggan',    desc:'Peringkat per sales' },
+              ].map(item => {
+                const checked = excelChecked[item.id];
+                return (
+                  <TouchableOpacity key={item.id}
+                    onPress={() => setExcelChecked(p => ({...p, [item.id]: !p[item.id]}))}
+                    style={{ flexDirection:'row', alignItems:'center', paddingVertical:12,
+                      borderBottomWidth:1, borderBottomColor:C.border, gap:12 }}>
+                    <View style={{ width:22, height:22, borderRadius:6, borderWidth:2,
+                      borderColor: checked ? C.success : C.muted,
+                      backgroundColor: checked ? C.success : 'transparent',
+                      alignItems:'center', justifyContent:'center' }}>
+                      {checked && <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>✓</Text>}
+                    </View>
+                    <View style={{ flex:1 }}>
+                      <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>{item.label}</Text>
+                      <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{item.desc}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                disabled={exporting}
+                onPress={handleExportExcel}
+                style={{ backgroundColor:C.success, borderRadius:16, paddingVertical:16,
+                  alignItems:'center', marginTop:16, marginBottom:10, opacity: exporting ? 0.6 : 1 }}>
+                <Text style={{ color:'#fff', fontSize:15, fontWeight:'800' }}>
+                  {exporting ? 'Membuat file...' : `📊 Export ${Object.values(excelChecked).filter(Boolean).length} Sheet`}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity disabled={exporting} onPress={() => setShowExcelMenu(false)}
+                style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:14, alignItems:'center', opacity: exporting ? 0.4 : 1 }}>
+                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {/* ── Import Preview Modal ── */}
       {importPreview && (
