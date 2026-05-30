@@ -2175,14 +2175,40 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
               <View style={{ flex:1 }}>
                 <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>🔐 Kunci Aplikasi</Text>
                 <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>
-                  Fingerprint / PIN HP saat buka app
+                  {pinLockEnabled
+                    ? '✅ Aktif — pakai fingerprint / PIN HP'
+                    : 'Nonaktif — fingerprint / PIN HP saat buka app'}
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => {
-                  const newVal = !pinLockEnabled;
-                  setPinLockEnabled(newVal);
-                  onUpdate({ pinLockEnabled: newVal });
+                onPress={async () => {
+                  if (!pinLockEnabled) {
+                    // ── AKTIFKAN: verifikasi dulu sebelum enable ──
+                    const hasHw    = await LocalAuthentication.hasHardwareAsync();
+                    const enrolled = await LocalAuthentication.isEnrolledAsync();
+                    if (!hasHw || !enrolled) {
+                      Alert.alert(
+                        'Fingerprint Tidak Tersedia',
+                        'HP kamu belum memiliki fingerprint atau PIN yang terdaftar.\n\nAktifkan dulu di Pengaturan HP → Keamanan → Kunci Layar.',
+                        [{ text: 'Mengerti' }]
+                      );
+                      return;
+                    }
+                    const result = await LocalAuthentication.authenticateAsync({
+                      promptMessage:         'Verifikasi untuk mengaktifkan Kunci Aplikasi',
+                      fallbackLabel:         'Gunakan PIN HP',
+                      cancelLabel:           'Batal',
+                      disableDeviceFallback: false,
+                    });
+                    if (!result.success) return; // batal — jangan aktifkan
+                    setPinLockEnabled(true);
+                    onUpdate({ pinLockEnabled: true });
+                    Alert.alert('🔐 Kunci Aktif', 'Aplikasi akan dikunci saat dibuka kembali atau setelah 30 detik di background.');
+                  } else {
+                    // ── NONAKTIFKAN: langsung disable ──
+                    setPinLockEnabled(false);
+                    onUpdate({ pinLockEnabled: false });
+                  }
                 }}
                 style={{ width:50, height:28, borderRadius:14,
                   backgroundColor: pinLockEnabled ? C.success : C.input,
