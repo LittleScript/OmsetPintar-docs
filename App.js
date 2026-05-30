@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.1.0';
+const APP_VER    = '4.2.0';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -1963,7 +1963,7 @@ function RankingScreen({ data }) {
 }
 
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
-function SettingsModal({ data, onUpdate, onImport, onClose,
+function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   driveEmail, driveLastSync, driveSyncing, driveTokenExpired,
   onDriveConnect, onDriveBackup, onDriveDisconnect }) {
   const C = useContext(ThemeContext);
@@ -1976,7 +1976,9 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
   const [notifHour,      setNotifHour]      = useState(data.notifHour??20);
   const [importPreview, setImportPreview] = useState(null);
   const [importing, setImporting]         = useState(false);
-  const [showExcelMenu, setShowExcelMenu] = useState(false);
+  const [showExcelMenu,     setShowExcelMenu]     = useState(false);
+  const [jsonRestorePreview,setJsonRestorePreview] = useState(null);
+  const [jsonRestoring,     setJsonRestoring]      = useState(false);
   const [backupHour,   setBackupHour]     = useState(23);
 
   useEffect(() => {
@@ -2082,6 +2084,86 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
       const salesNames = [...new Set(parsed.map(r => r.sales))];
       const totalAmt   = parsed.reduce((a, r) => a + r.amount, 0);
       setImportPreview({ allRows: parsed, dupeRows, nonDupeRows, salesNames, totalAmt });
+    } catch(e) {
+      Alert.alert('Error membaca file', String(e));
+    }
+  };
+
+  // ── Export CSV (format kompatibel dengan CSV importer) ──
+  const handleExportCsv = async () => {
+    try {
+      const activeTxns = (data.transactions || [])
+        .filter(t => !t.deletedAt)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      if (activeTxns.length === 0) {
+        Alert.alert('', 'Belum ada transaksi untuk diekspor'); return;
+      }
+
+      const esc = (s) => {
+        const str = String(s ?? '');
+        return str.includes(',') || str.includes('"') || str.includes('\n')
+          ? `"${str.replace(/"/g, '""')}"` : str;
+      };
+
+      const header = 'No. Bon,Sales,Tanggal,Nama Pelanggan,Total Belanja (Rp),Catatan';
+      const rows = activeTxns.map(t => {
+        const seq  = t.bonSeq || parseBon(t.bonNumber, data.bonConfig) || 0;
+        const date = fmtDate(t.date, 'dd/mm/yyyy'); // selalu dd/mm/yyyy untuk reimport
+        return [seq, esc(t.sales), date, esc(t.customerName), t.amount, esc(t.notes)].join(',');
+      });
+
+      const csv      = [header, ...rows].join('\n');
+      const filename = `omsetku-data-${todayStr()}.csv`;
+      const path     = FileSystem.documentDirectory + filename;
+      await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(path, { mimeType:'text/csv', dialogTitle:'Export CSV OmsetKu' });
+    } catch(e) {
+      Alert.alert('Export Gagal', String(e));
+    }
+  };
+
+  // ── Restore dari JSON backup ──
+  const handlePickJson = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/json', 'text/plain', '*/*'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+
+      const text = await FileSystem.readAsStringAsync(result.assets[0].uri);
+      let backup;
+      try { backup = JSON.parse(text); }
+      catch(e) { Alert.alert('Format Tidak Valid', 'File bukan JSON yang valid'); return; }
+
+      if (!backup?.data?.transactions) {
+        Alert.alert('Format Tidak Dikenali', 'Bukan file backup OmsetKu yang valid.\nPastikan file berasal dari menu "Export Backup JSON".');
+        return;
+      }
+
+      const allTxns    = (backup.data.transactions || []).filter(t => !t.deletedAt);
+      const salesNames = backup.data.salesList || [];
+
+      // Deteksi duplikat
+      const existingActive = (data.transactions || []).filter(t => !t.deletedAt);
+      const dupeRows = [], nonDupeRows = [];
+      allTxns.forEach(t => {
+        const isDupe = existingActive.some(e =>
+          e.bonNumber === t.bonNumber &&
+          e.date === (t.date || t.transaction_date) &&
+          getNorm(e.customerName) === getNorm(t.customerName || t.customer_name || '') &&
+          e.amount === t.amount
+        );
+        (isDupe ? dupeRows : nonDupeRows).push(t);
+      });
+
+      setJsonRestorePreview({
+        allTxns, nonDupeRows, dupeRows, salesNames,
+        exportedAt: backup.exportedAt,
+        appVersion: backup.appVersion || '?',
+        totalAmt:   allTxns.reduce((a, t) => a + (t.amount || 0), 0),
+      });
     } catch(e) {
       Alert.alert('Error membaca file', String(e));
     }
@@ -2365,19 +2447,35 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
               DATA
             </Text>
+            {/* ── Import ── */}
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>IMPORT</Text>
             <TouchableOpacity onPress={handlePickCsv}
-              style={{ backgroundColor:C.primary+'18', borderWidth:1.5, borderColor:C.primary, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10 }}>
-              <Text style={{ color:C.primary, fontSize:14, fontWeight:'800' }}>📥  Import dari CSV (Google Sheets)</Text>
+              style={{ backgroundColor:C.primary+'18', borderWidth:1.5, borderColor:C.primary, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8 }}>
+              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>📥  Import dari CSV (Google Sheets)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handlePickJson}
+              style={{ backgroundColor:C.primary+'18', borderWidth:1.5, borderColor:C.primary, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:12 }}>
+              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>🔄  Restore dari Backup JSON</Text>
+            </TouchableOpacity>
+
+            {/* ── Export ── */}
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>EXPORT</Text>
+            <TouchableOpacity onPress={handleExportCsv}
+              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8 }}>
+              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>📤  Export ke CSV (Google Sheets)</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowExcelMenu(true)}
-              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10 }}>
-              <Text style={{ color:C.success, fontSize:14, fontWeight:'800' }}>📊  Export ke Excel (.xlsx)</Text>
+              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8 }}>
+              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>📊  Export ke Excel (.xlsx)</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleExport} style={[btnStyle(C.input), {marginBottom:10}]}>
-              <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>📤  Export Backup (JSON)</Text>
+            <TouchableOpacity onPress={handleExport}
+              style={{ backgroundColor:C.input, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:12 }}>
+              <Text style={{ color:C.text, fontSize:13, fontWeight:'700' }}>💾  Export Backup JSON</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleReset} style={btnStyle(C.danger+'33')}>
-              <Text style={{ color:C.danger, fontSize:14, fontWeight:'700' }}>🗑  Reset Semua Data</Text>
+
+            {/* ── Danger ── */}
+            <TouchableOpacity onPress={handleReset} style={[btnStyle(C.danger+'33')]}>
+              <Text style={{ color:C.danger, fontSize:13, fontWeight:'700' }}>🗑  Reset Semua Data</Text>
             </TouchableOpacity>
           </View>
 
@@ -2581,6 +2679,87 @@ function SettingsModal({ data, onUpdate, onImport, onClose,
               </TouchableOpacity>
               <TouchableOpacity disabled={exporting} onPress={() => setShowExcelMenu(false)}
                 style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:14, alignItems:'center', opacity: exporting ? 0.4 : 1 }}>
+                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* ── JSON Restore Preview Modal ── */}
+      {jsonRestorePreview && (
+        <Modal visible animationType="slide" transparent onRequestClose={() => !jsonRestoring && setJsonRestorePreview(null)}>
+          <View style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.65)' }}>
+            <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, paddingBottom:36 }}>
+              <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:16 }}>
+                🔄 Preview Restore JSON
+              </Text>
+              <View style={{ backgroundColor:C.input, borderRadius:14, padding:14, marginBottom:14 }}>
+                <Text style={{ color:C.muted, fontSize:11, marginBottom:8 }}>
+                  Dari backup v{jsonRestorePreview.appVersion} · {jsonRestorePreview.exportedAt ? new Date(jsonRestorePreview.exportedAt).toLocaleDateString('id-ID') : '?'}
+                </Text>
+                <Text style={{ color:C.text, fontSize:14, marginBottom:6 }}>
+                  📦 <Text style={{ fontWeight:'800', color:C.accent }}>{jsonRestorePreview.allTxns.length}</Text> transaksi
+                </Text>
+                <Text style={{ color:C.text, fontSize:14, marginBottom:6 }}>
+                  👥 Sales: <Text style={{ fontWeight:'800', color:C.primary }}>{jsonRestorePreview.salesNames.join(', ') || '-'}</Text>
+                </Text>
+                <Text style={{ color:C.text, fontSize:14 }}>
+                  💰 Total: <Text style={{ fontWeight:'800', color:C.accent }}>{toIdr(jsonRestorePreview.totalAmt)}</Text>
+                </Text>
+                {jsonRestorePreview.dupeRows.length > 0 && (
+                  <View style={{ backgroundColor:C.warning+'22', borderRadius:8, padding:8, marginTop:10 }}>
+                    <Text style={{ color:C.warning, fontSize:12, fontWeight:'800' }}>
+                      ⚠️  {jsonRestorePreview.dupeRows.length} transaksi duplikat terdeteksi
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {jsonRestorePreview.dupeRows.length > 0 ? (
+                <>
+                  <TouchableOpacity disabled={jsonRestoring}
+                    onPress={async () => {
+                      setJsonRestoring(true);
+                      await onRestoreJson(jsonRestorePreview.nonDupeRows, jsonRestorePreview.salesNames);
+                      setJsonRestoring(false);
+                      setJsonRestorePreview(null);
+                    }}
+                    style={{ backgroundColor:C.primary, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10, opacity: jsonRestoring ? 0.6 : 1 }}>
+                    <Text style={{ color:'#fff', fontSize:14, fontWeight:'800' }}>
+                      {jsonRestoring ? 'Memproses...' : `✓ Restore ${jsonRestorePreview.nonDupeRows.length} (Lewati Duplikat)`}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity disabled={jsonRestoring}
+                    onPress={async () => {
+                      setJsonRestoring(true);
+                      await onRestoreJson(jsonRestorePreview.allTxns, jsonRestorePreview.salesNames);
+                      setJsonRestoring(false);
+                      setJsonRestorePreview(null);
+                    }}
+                    style={{ backgroundColor:C.warning+'22', borderWidth:1.5, borderColor:C.warning, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10, opacity: jsonRestoring ? 0.6 : 1 }}>
+                    <Text style={{ color:C.warning, fontSize:14, fontWeight:'800' }}>
+                      {jsonRestoring ? 'Memproses...' : `Restore Semua ${jsonRestorePreview.allTxns.length}`}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity disabled={jsonRestoring}
+                  onPress={async () => {
+                    setJsonRestoring(true);
+                    await onRestoreJson(jsonRestorePreview.allTxns, jsonRestorePreview.salesNames);
+                    setJsonRestoring(false);
+                    setJsonRestorePreview(null);
+                  }}
+                  style={{ backgroundColor:C.success, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10, opacity: jsonRestoring ? 0.6 : 1 }}>
+                  <Text style={{ color:'#fff', fontSize:15, fontWeight:'800' }}>
+                    {jsonRestoring ? 'Memproses...' : `✓ Restore ${jsonRestorePreview.allTxns.length} Transaksi`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity disabled={jsonRestoring} onPress={() => setJsonRestorePreview(null)}
+                style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:14, alignItems:'center', opacity: jsonRestoring ? 0.4 : 1 }}>
                 <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
               </TouchableOpacity>
             </View>
@@ -3384,6 +3563,41 @@ export default function App() {
     await reloadData();
   }, [reloadData]);
 
+  const handleRestoreJson = useCallback(async (txns, salesNames) => {
+    const db  = dbRef.current;
+    const now = new Date().toISOString();
+    const currentSalesList = [...(data?.salesList || [])];
+    // Buat sales yang belum ada
+    for (const s of salesNames) {
+      if (!currentSalesList.includes(s)) {
+        await addSales(db, s, null, currentSalesList.length);
+        currentSalesList.push(s);
+      }
+    }
+    // Insert transaksi
+    let inserted = 0;
+    for (const t of txns) {
+      const date         = t.date || t.transaction_date || '';
+      const customerName = (t.customerName || t.customer_name || '').trim();
+      const bonNumber    = t.bonNumber || t.bon_number || '';
+      const bonSeq       = t.bonSeq || t.bon_seq || 0;
+      const sales        = t.sales || t.sales_name || '';
+      const amount       = t.amount || 0;
+      const notes        = t.notes || '';
+      if (!date || !customerName || !sales || amount <= 0) continue;
+      const year = parseInt(date.slice(0, 4), 10);
+      const ym   = date.slice(0, 7);
+      await db.runAsync(
+        `INSERT INTO transactions (bon_number,bon_seq,sales_name,customer_name,customer_norm,amount,transaction_date,year,year_month,notes,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [bonNumber, bonSeq, sales, customerName, getNorm(customerName), amount, date, year, ym, notes, now, now]
+      );
+      inserted++;
+    }
+    await reloadData();
+    Alert.alert('✓ Restore Berhasil', `${inserted} transaksi berhasil direstore ke database.`);
+  }, [data, reloadData]);
+
   const handleMergeCustomer = useCallback(async (oldName, newName, sales) => {
     await mergeCustomerName(dbRef.current, oldName, newName, sales);
     await reloadData();
@@ -3539,6 +3753,7 @@ export default function App() {
           data={data}
           onUpdate={handleSettingsUpdate}
           onImport={handleImportCsv}
+          onRestoreJson={handleRestoreJson}
           onClose={() => setShowSett(false)}
           driveEmail={driveEmail}
           driveLastSync={driveLastSync}
