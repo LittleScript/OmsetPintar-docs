@@ -544,7 +544,7 @@ function getAutocomplete(query, txns, sales, limit=5) {
   return [...L1,...L2,...L3].sort((a,b)=>b.count-a.count).slice(0,limit);
 }
 
-// ─── TYPO DETECTION ───────────────────────────────────────────────────────────
+// ─── TYPO / SIMILAR NAME DETECTION ───────────────────────────────────────────
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
   const dp = Array.from({ length: m+1 }, (_, i) => {
@@ -562,8 +562,35 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+// Kata-kata umum yang diabaikan saat pencocokan
+const COMMON_NAME_WORDS = new Set(['pak','bu','mas','mba','mbak','ibu','bapak','bang','kak','om','tante','nak','dek']);
+
+function getSignificantWords(name) {
+  return getNorm(name)
+    .split(' ')
+    .filter(w => w.length >= 3 && !COMMON_NAME_WORDS.has(w));
+}
+
+// Cek apakah semua kata nama yang lebih pendek ada di nama yang lebih panjang
+// Contoh: "hutapea" ⊂ "andi hutapea" → true
+function hasWordOverlap(nameA, nameB) {
+  const wordsA = getSignificantWords(nameA);
+  const wordsB = getSignificantWords(nameB);
+  if (wordsA.length === 0 || wordsB.length === 0) return false;
+  if (wordsA.join(' ') === wordsB.join(' ')) return false; // nama sama persis
+
+  const shorter = wordsA.length <= wordsB.length ? wordsA : wordsB;
+  const longer  = wordsA.length <= wordsB.length ? wordsB : wordsA;
+
+  // Semua kata nama pendek harus ada di nama panjang
+  const allMatch = shorter.every(w => longer.includes(w));
+  if (!allMatch) return false;
+
+  // Setidaknya ada 1 kata >= 4 huruf yang cocok (hindari false positive nama 1 huruf)
+  return shorter.some(w => w.length >= 4);
+}
+
 function findSimilarNames(transactions) {
-  // Kumpulkan nama unik per sales
   const nameMap = {};
   transactions
     .filter(t => !t.deletedAt)
@@ -580,22 +607,29 @@ function findSimilarNames(transactions) {
   for (let i = 0; i < entries.length; i++) {
     for (let j = i + 1; j < entries.length; j++) {
       const a = entries[i], b = entries[j];
-      if (a.sales !== b.sales) continue; // hanya dalam 1 sales
+      if (a.sales !== b.sales) continue;
 
-      const normA = getNorm(a.name), normB = getNorm(b.name);
+      const normA   = getNorm(a.name), normB = getNorm(b.name);
       const pairKey = [normA, normB].sort().join('|||');
       if (seen.has(pairKey)) continue;
 
-      const dist   = levenshtein(normA, normB);
-      const maxLen = Math.max(normA.length, normB.length);
-      const threshold = maxLen <= 4 ? 1 : 2; // nama pendek: toleransi 1, panjang: 2
+      const dist      = levenshtein(normA, normB);
+      const maxLen    = Math.max(normA.length, normB.length);
+      const threshold = maxLen <= 4 ? 1 : 2;
 
-      if (dist > 0 && dist <= threshold) {
+      // Cek 1: Levenshtein (typo 1-2 karakter — "andi" vs "andu")
+      const isTypo = dist > 0 && dist <= threshold;
+
+      // Cek 2: Word overlap (nama parsial — "andi hutapea" vs "hutapea")
+      const isPartial = !isTypo && hasWordOverlap(normA, normB);
+
+      if (isTypo || isPartial) {
         seen.add(pairKey);
         pairs.push({
-          nameA: a.name, countA: a.count,
-          nameB: b.name, countB: b.count,
-          sales: a.sales, distance: dist,
+          nameA:  a.name, countA: a.count,
+          nameB:  b.name, countB: b.count,
+          sales:  a.sales,
+          reason: isTypo ? `Typo (${dist} karakter beda)` : 'Mungkin nama parsial',
         });
       }
     }
@@ -2737,7 +2771,7 @@ function CustomersScreen({ data, onMerge }) {
                         <View style={{ flexDirection:'row', alignItems:'center', gap:6, marginBottom:12 }}>
                           <View style={{ width:8, height:8, borderRadius:4, backgroundColor:salesColor }} />
                           <Text style={{ color:salesColor, fontSize:11, fontWeight:'700' }}>{pair.sales}</Text>
-                          <Text style={{ color:C.muted, fontSize:10 }}>• jarak {pair.distance} karakter</Text>
+                          <Text style={{ color:C.muted, fontSize:10 }}>• {pair.reason}</Text>
                         </View>
                         <View style={{ flexDirection:'row', gap:8, marginBottom:12 }}>
                           {/* Nama A */}
