@@ -16,7 +16,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, useContext, c
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
-  StyleSheet, Alert, Dimensions, Platform, Modal, ActivityIndicator,
+  Alert, Dimensions, Platform, Modal, ActivityIndicator,
   KeyboardAvoidingView, StatusBar, useColorScheme, Image, BackHandler, ToastAndroid,
   Share, AppState,
 } from 'react-native';
@@ -60,7 +60,6 @@ const SCHEMA_VER = 1;
 // Isi dengan Web Client ID dari Google Cloud Console (lihat GOOGLE_DRIVE_SETUP.md)
 const GOOGLE_WEB_CLIENT_ID = '846894493859-vl3v947mucd6chu7tm0agi7kbitpb27a.apps.googleusercontent.com';
 const GDRIVE_TOKEN_KEY      = 'gdrive_access_token';
-const GDRIVE_REFRESH_KEY    = 'gdrive_refresh_token';
 const GDRIVE_EMAIL_KEY      = 'gdrive_user_email';
 const GDRIVE_LAST_BACKUP_KEY= 'gdrive_last_backup';
 const GDRIVE_TASK_NAME      = 'OMSETKU_GDRIVE_BACKUP';
@@ -133,8 +132,6 @@ TaskManager.defineTask(GDRIVE_TASK_NAME, async () => {
     return BackgroundFetch.BackgroundFetchResult.Failed;
   }
 });
-const { width: SW } = Dimensions.get('window');
-
 // ─── THEME CONTEXT ────────────────────────────────────────────────────────────
 const ThemeContext = createContext(DARK_THEME);
 
@@ -291,8 +288,9 @@ async function loadSales(db) {
 }
 
 async function loadTransactions(db) {
+  // Load semua transaksi: aktif + soft-deleted (untuk fitur Pulihkan di History)
   return db.getAllAsync(
-    'SELECT * FROM transactions WHERE deleted_at IS NULL ORDER BY id DESC'
+    'SELECT * FROM transactions ORDER BY id DESC'
   );
 }
 
@@ -624,39 +622,6 @@ const KpiCard = ({ label, value, sub, color, style }) => {
   </View>
   );
 };
-
-// ─── LOGIN ────────────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }) {
-  const C = useContext(ThemeContext);
-  const st = getStyles(C);
-
-  const [name, setName] = useState('');
-  return (
-    <View style={{ flex:1, justifyContent:'center', alignItems:'center', padding:24, backgroundColor:C.bg }}>
-      <Image source={require('./assets/icon.png')}
-        style={{ width:90, height:90, borderRadius:20, marginBottom:16 }} />
-      <Text style={{ color:C.text, fontSize:24, fontWeight:'800', marginBottom:8 }}>
-        OmsetKu
-      </Text>
-      <Text style={{ color:C.muted, fontSize:14, marginBottom:28, textAlign:'center' }}>
-        Masukkan nama bisnis kamu
-      </Text>
-      <TextInput
-        value={name} onChangeText={setName}
-        placeholder="Contoh: Toko Maju Jaya" placeholderTextColor={C.muted}
-        style={[st.input, { width:'100%', maxWidth:320, textAlign:'center', fontSize:17 }]}
-        returnKeyType="done"
-        onSubmitEditing={() => name.trim() && onLogin(name.trim())}
-      />
-      <TouchableOpacity
-        onPress={() => name.trim() && onLogin(name.trim())}
-        style={[btnStyle(C.primary), { maxWidth:320, marginTop:14 }]}
-      >
-        <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>MASUK</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
 
 // ─── SETUP WIZARD ─────────────────────────────────────────────────────────────
 function SetupWizard({ data, onComplete }) {
