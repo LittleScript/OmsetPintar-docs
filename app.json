@@ -2,19 +2,19 @@
   "expo": {
     "name": "OmsetKu",
     "slug": "omsetku",
-    "version": "3.7.0",
+    "version": "3.8.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#ffffff",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#071018",
     "icon": "./assets/icon.png",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#071018"
     },
     "android": {
       "package": "com.omsetku.app",
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#071018"
@@ -23,7 +23,8 @@
     "plugins": [
       "expo-sqlite",
       "expo-asset",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-local-authentication"
     ],
     "owner": "aliangkoko",
     "extra": {

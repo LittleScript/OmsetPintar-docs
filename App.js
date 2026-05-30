@@ -18,6 +18,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
   StyleSheet, Alert, Dimensions, Platform, Modal, ActivityIndicator,
   KeyboardAvoidingView, StatusBar, useColorScheme, Image, BackHandler, ToastAndroid,
+  Share, AppState,
 } from 'react-native';
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
@@ -25,6 +26,7 @@ import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import * as XLSX from 'xlsx';
+import * as LocalAuthentication from 'expo-local-authentication';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -45,7 +47,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.7.0';
+const APP_VER    = '3.8.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
@@ -142,6 +144,9 @@ async function initDb() {
   try {
     await db.execAsync(`ALTER TABLE settings ADD COLUMN theme_mode TEXT NOT NULL DEFAULT 'dark'`);
   } catch(e) { /* column already exists, ok */ }
+  try {
+    await db.execAsync(`ALTER TABLE settings ADD COLUMN pin_lock_enabled INTEGER NOT NULL DEFAULT 0`);
+  } catch(e) {}
   await db.execAsync(`PRAGMA foreign_keys = ON;`);
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -231,7 +236,8 @@ async function assembleData(db) {
   const salesRows = await loadSales(db);
   const txRows    = await loadTransactions(db);
   return {
-    themeMode:     cfg.theme_mode || 'dark',
+    themeMode:      cfg.theme_mode || 'dark',
+    pinLockEnabled: !!cfg.pin_lock_enabled,
     companyName:    cfg.company_name,
     isSetupComplete:!!cfg.is_setup_complete,
     bonConfig: {
@@ -363,7 +369,8 @@ async function updateSettings(db, fields) {
   if (fields.bonSeparator!=null){ sets.push('bon_separator=?');  vals.push(fields.bonSeparator); }
   if (fields.bonDigits  !=null){ sets.push('bon_digit_length=?');vals.push(fields.bonDigits); }
   if (fields.activeYear !=null){ sets.push('active_year=?');     vals.push(fields.activeYear); }
-  if (fields.themeMode  !=null){ sets.push('theme_mode=?');      vals.push(fields.themeMode); }
+  if (fields.themeMode     !=null){ sets.push('theme_mode=?');       vals.push(fields.themeMode); }
+  if (fields.pinLockEnabled!=null){ sets.push('pin_lock_enabled=?'); vals.push(fields.pinLockEnabled?1:0); }
   if (!sets.length) return;
   await db.runAsync(`UPDATE settings SET ${sets.join(',')} WHERE id=1`, vals);
 }
@@ -757,20 +764,7 @@ function InputScreen({ data, onSave, dirtyRef }) {
     setDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
   };
 
-  const handleSave = async () => {
-    const cleanAmt = parseInt(amount.replace(/\D/g,'')) || 0;
-    if (!customer.trim() || cleanAmt <= 0 || saving) return;
-    setSaving(true);
-    const tx = {
-      bonNumber: bonNo,
-      nextSeq,
-      bonManual: bonOverride,  // FIX 3: track manual edit for correct sequence
-      sales,
-      customerName: customer.trim(),
-      amount: cleanAmt,
-      date,
-      notes: notes.trim(),
-    };
+  const doSave = async (tx) => {
     await onSave(tx);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     if (dirtyRef) dirtyRef.current = false;
@@ -783,8 +777,42 @@ function InputScreen({ data, onSave, dirtyRef }) {
     setBonEditing(false);
     setSaving(false);
     setTimeout(() => setJustSaved(false), 1500);
-    // Alur: simpan bon → langsung kembali ke input nama pelanggan
     setTimeout(() => customerRef.current?.focus(), 150);
+  };
+
+  const handleSave = async () => {
+    const cleanAmt = parseInt(amount.replace(/\D/g,'')) || 0;
+    if (!customer.trim() || cleanAmt <= 0 || saving) return;
+    setSaving(true);
+    const tx = {
+      bonNumber: bonNo,
+      nextSeq,
+      bonManual: bonOverride,
+      sales,
+      customerName: customer.trim(),
+      amount: cleanAmt,
+      date,
+      notes: notes.trim(),
+    };
+    // Cek duplikat: tanggal + pelanggan + nominal identik
+    const norm = getNorm(customer.trim());
+    const duplicate = transactions.find(t =>
+      !t.deletedAt && t.date === date &&
+      getNorm(t.customerName) === norm && t.amount === cleanAmt
+    );
+    if (duplicate) {
+      setSaving(false);
+      Alert.alert(
+        '⚠️ Mungkin Double Input',
+        `Sudah ada bon ${duplicate.bonNumber} untuk:\n"${duplicate.customerName}" · ${toIdr(duplicate.amount)}\npada ${fmtDate(duplicate.date, dateFormat)}\n\nYakin mau simpan lagi?`,
+        [
+          { text: 'Cek Dulu', style: 'cancel' },
+          { text: 'Simpan Tetap', onPress: () => { setSaving(true); doSave(tx); } },
+        ]
+      );
+      return;
+    }
+    await doSave(tx);
   };
 
   const salesColor = COLORS[salesList.indexOf(sales) % COLORS.length];
@@ -1044,11 +1072,37 @@ function DashboardScreen({ data, onYearChange }) {
 
       {/* Today + Week */}
       <View style={[st.card, { borderLeftWidth:3, borderLeftColor:C.accent }]}>
+        {/* Header row: label + share button */}
+        <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase' }}>
+            HARI INI · {fmtDate(today, dateFormat)}
+          </Text>
+          <TouchableOpacity
+            onPress={async () => {
+              const lines = [
+                `📊 *Rekap Omset Hari Ini*`,
+                `🏪 ${data.companyName || 'Toko'}  |  ${fmtDate(today, dateFormat)}`,
+                ``,
+                `💰 Total: *${toIdr(todayTotal)}*`,
+                `🧾 Jumlah Bon: ${todayTxns.length}`,
+                ``,
+              ];
+              if (todayTxns.length > 0) {
+                salesList.forEach(s => {
+                  const sTx = todayTxns.filter(t => t.sales === s);
+                  if (sTx.length > 0) lines.push(`• ${s}: ${toIdr(sTx.reduce((a,t)=>a+t.amount,0))} (${sTx.length} bon)`);
+                });
+                lines.push('');
+              }
+              lines.push(`_via OmsetKu_`);
+              try { await Share.share({ message: lines.join('\n') }); } catch(e) {}
+            }}
+            style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:10, paddingVertical:5 }}>
+            <Text style={{ color:C.muted, fontSize:12 }}>📤 Share</Text>
+          </TouchableOpacity>
+        </View>
         <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:8 }}>
           <View>
-            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase' }}>
-              HARI INI · {fmtDate(today, dateFormat)}
-            </Text>
             <Text style={[st.mono, { color:C.text, fontSize:20, fontWeight:'800' }]}>
               {toIdr(todayTotal)}
             </Text>
@@ -1233,6 +1287,8 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
   const [editForm, setEditForm] = useState({});
   const [editLogTx, setEditLogTx] = useState(null);
   const [showEditDatePicker, setShowEditDatePicker] = useState(false);
+  const [histPage, setHistPage] = useState(1);
+  const HIST_PAGE_SIZE = 30;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1245,6 +1301,14 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
         (t.bonNumber||'').toLowerCase().includes(q)
       );
   }, [transactions, salesF, search]);
+
+  // Reset page saat filter/search berubah
+  useEffect(() => { setHistPage(1); }, [search, salesF]);
+
+  const displayedHistory = useMemo(
+    () => filtered.slice(0, histPage * HIST_PAGE_SIZE),
+    [filtered, histPage]
+  );
 
   const openEdit = (tx) => {
     // Pisahkan bagian numerik dari bon number untuk editing
@@ -1352,8 +1416,24 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
         </ScrollView>
       </View>
 
-      <FlatList data={filtered} renderItem={renderItem} keyExtractor={i => String(i.id)}
+      <FlatList data={displayedHistory} renderItem={renderItem} keyExtractor={i => String(i.id)}
         contentContainerStyle={{ padding:14, paddingBottom:110 }}
+        onEndReached={() => { if (histPage * HIST_PAGE_SIZE < filtered.length) setHistPage(p => p+1); }}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={
+          histPage * HIST_PAGE_SIZE < filtered.length ? (
+            <View style={{ alignItems:'center', paddingVertical:16 }}>
+              <ActivityIndicator color={C.primary} />
+              <Text style={{ color:C.muted, fontSize:11, marginTop:6 }}>
+                {displayedHistory.length}/{filtered.length} bon
+              </Text>
+            </View>
+          ) : filtered.length > HIST_PAGE_SIZE ? (
+            <Text style={{ color:C.muted, fontSize:11, textAlign:'center', paddingVertical:12 }}>
+              Semua {filtered.length} bon ditampilkan
+            </Text>
+          ) : null
+        }
         ListEmptyComponent={
           <View style={{ alignItems:'center', paddingVertical:60 }}>
             <Text style={{ fontSize:40, marginBottom:12 }}>📋</Text>
@@ -1675,7 +1755,8 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
   const st = getStyles(C);
 
   const { salesList, bonConfig, dateFormat, companyName } = data;
-  const [themeMode, setThemeMode]= useState(data.themeMode||'dark');
+  const [themeMode, setThemeMode]   = useState(data.themeMode||'dark');
+  const [pinLockEnabled, setPinLockEnabled] = useState(data.pinLockEnabled||false);
   const [importPreview, setImportPreview] = useState(null);
   const [importing, setImporting]         = useState(false);
   const [showExcelMenu, setShowExcelMenu] = useState(false);
@@ -1982,6 +2063,33 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
             </TouchableOpacity>
           </View>
 
+          {/* Keamanan — PIN / Fingerprint */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+              KEAMANAN
+            </Text>
+            <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+              <View style={{ flex:1 }}>
+                <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>🔐 Kunci Aplikasi</Text>
+                <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>
+                  Fingerprint / PIN HP saat buka app
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  const newVal = !pinLockEnabled;
+                  setPinLockEnabled(newVal);
+                  onUpdate({ pinLockEnabled: newVal });
+                }}
+                style={{ width:50, height:28, borderRadius:14,
+                  backgroundColor: pinLockEnabled ? C.success : C.input,
+                  justifyContent:'center', paddingHorizontal:3 }}>
+                <View style={{ width:22, height:22, borderRadius:11, backgroundColor:'#fff',
+                  alignSelf: pinLockEnabled ? 'flex-end' : 'flex-start' }} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
           {/* Theme */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
@@ -2198,23 +2306,25 @@ function CustomersScreen({ data }) {
   const { salesList, transactions, dateFormat } = data;
   const [salesF, setSalesF]       = useState('ALL');
   const [search, setSearch]       = useState('');
+  const [sortBy, setSortBy]       = useState('nama'); // 'nama' | 'total' | 'terbaru'
   const [selectedCustomer, setSelectedCustomer] = useState(null);
 
-  const allCustomers = useMemo(
-    () => getCustomerList(transactions, salesF),
-    [transactions, salesF]
-  );
+  const allCustomers = useMemo(() => {
+    const list = getCustomerList(transactions, salesF);
+    if (sortBy === 'total')   return [...list].sort((a,b) => b.total - a.total);
+    if (sortBy === 'terbaru') return [...list].sort((a,b) => b.lastDate.localeCompare(a.lastDate));
+    return list; // nama A-Z (default)
+  }, [transactions, salesF, sortBy]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return allCustomers;
     const q = search.trim().toLowerCase();
-    return allCustomers.filter(c =>
-      c.name.toLowerCase().includes(q)
-    );
+    return allCustomers.filter(c => c.name.toLowerCase().includes(q));
   }, [allCustomers, search]);
 
-  // Group A-Z
+  // Group A-Z hanya saat sort by nama
   const grouped = useMemo(() => {
+    if (sortBy !== 'nama') return null; // flat list untuk sort lain
     const sections = {};
     filtered.forEach(c => {
       const letter = (c.name[0] || '#').toUpperCase();
@@ -2222,8 +2332,8 @@ function CustomersScreen({ data }) {
       if (!sections[key]) sections[key] = [];
       sections[key].push(c);
     });
-    return Object.entries(sections).sort(([a], [b]) => a.localeCompare(b));
-  }, [filtered]);
+    return Object.entries(sections).sort(([a],[b]) => a.localeCompare(b));
+  }, [filtered, sortBy]);
 
   const renderCustomerItem = ({ item: c }) => {
     const salesColor = COLORS[salesList.indexOf(c.sales) % COLORS.length] || C.primary;
@@ -2273,13 +2383,38 @@ function CustomersScreen({ data }) {
             })}
           </View>
         </ScrollView>
+        {/* Sort chips */}
+        <View style={{ flexDirection:'row', gap:8, marginBottom:8 }}>
+          {[['nama','A–Z'],['total','Terbesar'],['terbaru','Terbaru']].map(([key,lbl]) => (
+            <TouchableOpacity key={key} onPress={() => setSortBy(key)}
+              style={{ paddingHorizontal:12, paddingVertical:5, borderRadius:8,
+                backgroundColor: sortBy===key ? C.primary : C.input }}>
+              <Text style={{ color: sortBy===key ? '#fff' : C.muted, fontSize:11, fontWeight:'700' }}>{lbl}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
         <Text style={{ color:C.muted, fontSize:11, marginBottom:6 }}>
           {filtered.length} pelanggan
         </Text>
       </View>
 
-      {/* A-Z grouped list */}
-      {grouped.length === 0 ? (
+      {/* List — A-Z grouped (nama) atau flat (total/terbaru) */}
+      {grouped === null ? (
+        /* Flat list untuk sort total/terbaru */
+        filtered.length === 0 ? (
+          <View style={{ alignItems:'center', paddingVertical:60 }}>
+            <Text style={{ fontSize:40, marginBottom:12 }}>👥</Text>
+            <Text style={{ color:C.muted }}>Belum ada pelanggan</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={c => `${c.sales}|${c.name}`}
+            contentContainerStyle={{ paddingHorizontal:14, paddingBottom:110 }}
+            renderItem={({ item: c }) => renderCustomerItem({ item: c })}
+          />
+        )
+      ) : grouped.length === 0 ? (
         <View style={{ alignItems:'center', paddingVertical:60 }}>
           <Text style={{ fontSize:40, marginBottom:12 }}>👥</Text>
           <Text style={{ color:C.muted }}>Belum ada pelanggan</Text>
@@ -2461,6 +2596,54 @@ export default function App() {
     if (fresh) setData(fresh);
   }, []);
 
+  // ── PIN Lock / Fingerprint ──────────────────────────────────
+  const [isLocked, setIsLocked]     = useState(false);
+  const pinInitialized              = useRef(false);
+  const lastBackgroundTime          = useRef(null);
+
+  // Set lock saat pertama data load (jika pin enabled)
+  useEffect(() => {
+    if (dbReady && data && !pinInitialized.current) {
+      pinInitialized.current = true;
+      if (data.pinLockEnabled) setIsLocked(true);
+    }
+  }, [dbReady, data]);
+
+  // Lock kembali jika app background > 30 detik
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', nextState => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        lastBackgroundTime.current = Date.now();
+      } else if (nextState === 'active') {
+        if (data?.pinLockEnabled && lastBackgroundTime.current) {
+          if (Date.now() - lastBackgroundTime.current > 30000) setIsLocked(true);
+        }
+        lastBackgroundTime.current = null;
+      }
+    });
+    return () => sub.remove();
+  }, [data?.pinLockEnabled]);
+
+  const handleAuthenticate = useCallback(async () => {
+    try {
+      const hasHw   = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHw || !enrolled) { setIsLocked(false); return; }
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage:          'Verifikasi untuk masuk OmsetKu',
+        fallbackLabel:          'Gunakan PIN HP',
+        cancelLabel:            'Batal',
+        disableDeviceFallback:  false,
+      });
+      if (result.success) setIsLocked(false);
+    } catch(e) { setIsLocked(false); }
+  }, []);
+
+  // Auto-prompt saat lock screen muncul
+  useEffect(() => {
+    if (isLocked) handleAuthenticate();
+  }, [isLocked]);
+
   // Pindah tab dengan cek unsaved input
   const handleTabChange = (newTab) => {
     if (tab === 'input' && newTab !== 'input' && inputDirtyRef.current) {
@@ -2603,6 +2786,28 @@ export default function App() {
 
   if (!data.isSetupComplete) {
     return <SetupWizard data={data} onComplete={handleSetupComplete} />;
+  }
+
+  // Lock screen — tampil jika PIN enabled dan belum terautentikasi
+  if (data.pinLockEnabled && isLocked) {
+    return (
+      <View style={{ flex:1, backgroundColor:currentTheme.bg, alignItems:'center', justifyContent:'center', padding:24 }}>
+        <StatusBar barStyle="light-content" backgroundColor={currentTheme.bg} />
+        <Image source={require('./assets/icon.png')}
+          style={{ width:90, height:90, borderRadius:20, marginBottom:20 }} />
+        <Text style={{ color:currentTheme.text, fontSize:22, fontWeight:'800', marginBottom:6 }}>
+          OmsetKu
+        </Text>
+        <Text style={{ color:currentTheme.muted, fontSize:14, marginBottom:40, textAlign:'center' }}>
+          Verifikasi identitas untuk melanjutkan
+        </Text>
+        <TouchableOpacity onPress={handleAuthenticate}
+          style={{ backgroundColor:currentTheme.primary, borderRadius:16,
+            paddingVertical:16, paddingHorizontal:40 }}>
+          <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>🔐 Buka Aplikasi</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
 
   const st = getStyles(C);
