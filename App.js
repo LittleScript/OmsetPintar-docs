@@ -22,6 +22,7 @@ import {
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as DocumentPicker from 'expo-document-picker';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -42,7 +43,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.2.0';
+const APP_VER    = '3.3.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
@@ -429,6 +430,59 @@ function getAutocomplete(query, txns, sales, limit=5) {
   const L2 = all.filter(c => !L1.includes(c) && ini(c.name).startsWith(q));
   const L3 = all.filter(c => !L1.includes(c) && !L2.includes(c) && c.name.toLowerCase().includes(q));
   return [...L1,...L2,...L3].sort((a,b)=>b.count-a.count).slice(0,limit);
+}
+
+// ─── CSV IMPORT PARSER ────────────────────────────────────────────────────────
+// Format sheet: No.Bon | Sales | - | Tanggal(dd/mm/yyyy) | Pelanggan | Nominal | Catatan
+function parseCsvText(text, bonConfig) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  // Auto-detect delimiter (semicolon vs comma)
+  const sample = lines.slice(0, 6).join('');
+  const delim  = (sample.match(/;/g)||[]).length > (sample.match(/,/g)||[]).length ? ';' : ',';
+
+  const splitLine = (line) => {
+    const fields = [];
+    let inQ = false, cur = '';
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
+      else if (c === delim && !inQ) { fields.push(cur.trim()); cur=''; }
+      else cur += c;
+    }
+    fields.push(cur.trim());
+    return fields;
+  };
+
+  const rows = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const f = splitLine(line);
+    // Col 0: bon seq — must be parseable as positive integer
+    const bonSeq = parseInt((f[0]||'').replace(/\D/g,''), 10);
+    if (!bonSeq) continue;
+    // Col 1: sales name
+    const sales = (f[1]||'').trim().toUpperCase();
+    if (!sales || sales === 'SALES') continue;
+    // Col 2: separator (skip)
+    // Col 3: date dd/mm/yyyy
+    const dRaw   = (f[3]||'').trim();
+    const dParts = dRaw.split('/');
+    if (dParts.length !== 3) continue;
+    const date = `${dParts[2].padStart(4,'0')}-${dParts[1].padStart(2,'0')}-${dParts[0].padStart(2,'0')}`;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    // Col 4: customer name
+    const customerName = (f[4]||'').trim();
+    if (!customerName) continue;
+    // Col 5: amount — strip all non-digits
+    const amount = parseInt((f[5]||'').replace(/[^\d]/g,''), 10);
+    if (!amount || amount <= 0) continue;
+    // Col 6: notes (optional)
+    const notes = (f[6]||'').trim();
+    // Generate bon number using current app prefix config
+    const bonNumber = genBon(bonSeq, bonConfig);
+    rows.push({ bonSeq, bonNumber, sales, date, customerName, amount, notes });
+  }
+  return rows;
 }
 
 // ─── STYLE HELPERS (outside StyleSheet to avoid closure issues) ───────────────
@@ -1426,12 +1480,14 @@ function RankingScreen({ data }) {
 }
 
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
-function SettingsModal({ data, onUpdate, onClose }) {
+function SettingsModal({ data, onUpdate, onImport, onClose }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
 
   const { salesList, bonConfig, dateFormat, companyName } = data;
   const [themeMode, setThemeMode]= useState(data.themeMode||'dark');
+  const [importPreview, setImportPreview] = useState(null);
+  const [importing, setImporting]         = useState(false);
   const [company, setCompany]   = useState(companyName||'');
   const [prefix,  setPrefix]    = useState(bonConfig?.prefix||'INV');
   const [sep,     setSep]       = useState(bonConfig?.separator||'-');
@@ -1494,6 +1550,43 @@ function SettingsModal({ data, onUpdate, onClose }) {
         { text:'Hapus Semua', style:'destructive', onPress: () => onUpdate({ resetData: true }) },
       ]
     );
+  };
+
+  const handlePickCsv = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/comma-separated-values', 'text/plain', '*/*'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const uri  = result.assets[0].uri;
+      const text = await FileSystem.readAsStringAsync(uri);
+      const parsed = parseCsvText(text, data.bonConfig);
+      if (!parsed.length) {
+        Alert.alert(
+          'Format Tidak Dikenali',
+          'Tidak ada data valid di file ini.\n\nPastikan kolom CSV:\nNo.Bon | Sales | - | Tanggal | Pelanggan | Nominal | Catatan'
+        );
+        return;
+      }
+      // Deteksi duplikat: tanggal + customer_norm + amount sama
+      const existingActive = (data.transactions||[]).filter(t => !t.deletedAt);
+      const dupeRows = [], nonDupeRows = [];
+      parsed.forEach(row => {
+        const norm  = getNorm(row.customerName);
+        const isDupe = existingActive.some(t =>
+          t.date === row.date &&
+          getNorm(t.customerName) === norm &&
+          t.amount === row.amount
+        );
+        (isDupe ? dupeRows : nonDupeRows).push(row);
+      });
+      const salesNames = [...new Set(parsed.map(r => r.sales))];
+      const totalAmt   = parsed.reduce((a, r) => a + r.amount, 0);
+      setImportPreview({ allRows: parsed, dupeRows, nonDupeRows, salesNames, totalAmt });
+    } catch(e) {
+      Alert.alert('Error membaca file', String(e));
+    }
   };
 
   return (
@@ -1587,6 +1680,10 @@ function SettingsModal({ data, onUpdate, onClose }) {
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
               DATA
             </Text>
+            <TouchableOpacity onPress={handlePickCsv}
+              style={{ backgroundColor:C.primary+'18', borderWidth:1.5, borderColor:C.primary, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10 }}>
+              <Text style={{ color:C.primary, fontSize:14, fontWeight:'800' }}>📥  Import dari CSV (Google Sheets)</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={handleExport} style={[btnStyle(C.input), {marginBottom:10}]}>
               <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>📤  Export Backup</Text>
             </TouchableOpacity>
@@ -1622,6 +1719,110 @@ function SettingsModal({ data, onUpdate, onClose }) {
           </Text>
         </ScrollView>
       </View>
+
+      {/* ── Import Preview Modal ── */}
+      {importPreview && (
+        <Modal visible animationType="slide" transparent onRequestClose={() => !importing && setImportPreview(null)}>
+          <View style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.65)' }}>
+            <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, paddingBottom:36 }}>
+              <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:16 }}>
+                📋 Preview Import CSV
+              </Text>
+
+              {/* Stats */}
+              <View style={{ backgroundColor:C.input, borderRadius:14, padding:14, marginBottom:14 }}>
+                <Text style={{ color:C.text, fontSize:14, marginBottom:6 }}>
+                  📦 Ditemukan{' '}
+                  <Text style={{ fontWeight:'800', color:C.accent }}>{importPreview.allRows.length}</Text>
+                  {' '}transaksi
+                </Text>
+                <Text style={{ color:C.text, fontSize:14, marginBottom:6 }}>
+                  👥 Sales:{' '}
+                  <Text style={{ fontWeight:'800', color:C.primary }}>
+                    {importPreview.salesNames.length} ({importPreview.salesNames.join(', ')})
+                  </Text>
+                </Text>
+                <Text style={{ color:C.text, fontSize:14, marginBottom:6 }}>
+                  💰 Total Transaksi:{' '}
+                  <Text style={{ fontWeight:'800', color:C.accent }}>{toIdr(importPreview.totalAmt)}</Text>
+                </Text>
+                <Text style={{ color:C.text, fontSize:14 }}>
+                  🧾 Total Bon:{' '}
+                  <Text style={{ fontWeight:'800' }}>{importPreview.allRows.length}</Text>
+                </Text>
+                {importPreview.dupeRows.length > 0 && (
+                  <View style={{ backgroundColor:C.warning+'22', borderRadius:10, padding:10, marginTop:10 }}>
+                    <Text style={{ color:C.warning, fontSize:13, fontWeight:'800' }}>
+                      ⚠️  {importPreview.dupeRows.length} transaksi duplikat terdeteksi
+                    </Text>
+                    <Text style={{ color:C.muted, fontSize:11, marginTop:3 }}>
+                      Duplikat = tanggal + nama pelanggan + nominal sama dengan data yang sudah ada
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Action buttons */}
+              {importPreview.dupeRows.length > 0 ? (
+                <>
+                  <TouchableOpacity
+                    disabled={importing || importPreview.nonDupeRows.length === 0}
+                    onPress={async () => {
+                      setImporting(true);
+                      await onImport(importPreview.nonDupeRows);
+                      setImporting(false);
+                      setImportPreview(null);
+                    }}
+                    style={{ backgroundColor: importPreview.nonDupeRows.length===0 ? C.muted : C.primary,
+                      borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10,
+                      opacity: importing ? 0.6 : 1 }}>
+                    <Text style={{ color:'#fff', fontSize:14, fontWeight:'800' }}>
+                      {importing ? 'Mengimport...' : `✓ Import ${importPreview.nonDupeRows.length} (Lewati ${importPreview.dupeRows.length} Duplikat)`}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={importing}
+                    onPress={async () => {
+                      setImporting(true);
+                      await onImport(importPreview.allRows);
+                      setImporting(false);
+                      setImportPreview(null);
+                    }}
+                    style={{ backgroundColor: C.warning+'22', borderWidth:1.5, borderColor:C.warning,
+                      borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10,
+                      opacity: importing ? 0.6 : 1 }}>
+                    <Text style={{ color:C.warning, fontSize:14, fontWeight:'800' }}>
+                      {importing ? 'Mengimport...' : `Import Semua ${importPreview.allRows.length} (Termasuk Duplikat)`}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  disabled={importing}
+                  onPress={async () => {
+                    setImporting(true);
+                    await onImport(importPreview.allRows);
+                    setImporting(false);
+                    setImportPreview(null);
+                  }}
+                  style={{ backgroundColor: C.success, borderRadius:16, paddingVertical:16,
+                    alignItems:'center', marginBottom:10, opacity: importing ? 0.6 : 1 }}>
+                  <Text style={{ color:'#fff', fontSize:15, fontWeight:'800' }}>
+                    {importing ? 'Mengimport...' : `✓ Import ${importPreview.allRows.length} Transaksi`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                disabled={importing}
+                onPress={() => setImportPreview(null)}
+                style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:16, alignItems:'center', opacity: importing ? 0.4 : 1 }}>
+                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </Modal>
   );
 }
@@ -1960,6 +2161,34 @@ export default function App() {
     await reloadData();
   }, [reloadData]);
 
+  const handleImportCsv = useCallback(async (rows) => {
+    const db = dbRef.current;
+    const now = new Date().toISOString();
+    const currentSalesList = [...(data?.salesList || [])];
+    let inserted = 0;
+    for (const row of rows) {
+      // Auto-create sales jika belum ada
+      if (!currentSalesList.includes(row.sales)) {
+        await addSales(db, row.sales, null, currentSalesList.length);
+        currentSalesList.push(row.sales);
+      }
+      const year = parseInt(row.date.slice(0, 4), 10);
+      const ym   = row.date.slice(0, 7);
+      const norm = getNorm(row.customerName);
+      await db.runAsync(
+        `INSERT INTO transactions
+         (bon_number,bon_seq,sales_name,customer_name,customer_norm,amount,
+          transaction_date,year,year_month,notes,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [row.bonNumber, row.bonSeq, row.sales, row.customerName.trim(), norm,
+         row.amount, row.date, year, ym, row.notes||'', now, now]
+      );
+      inserted++;
+    }
+    await reloadData();
+    Alert.alert('✓ Import Berhasil', `${inserted} transaksi berhasil diimport ke database.`);
+  }, [data, reloadData]);
+
   const handleSettingsUpdate = useCallback(async (fields) => {
     const db = dbRef.current;
     // Update React theme state — ThemeContext.Provider will re-render all children
@@ -2059,6 +2288,7 @@ export default function App() {
         <SettingsModal
           data={data}
           onUpdate={handleSettingsUpdate}
+          onImport={handleImportCsv}
           onClose={() => setShowSett(false)}
         />
       )}
