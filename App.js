@@ -57,7 +57,7 @@ const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
 // Isi dengan Web Client ID dari Google Cloud Console (lihat GOOGLE_DRIVE_SETUP.md)
-const GOOGLE_WEB_CLIENT_ID = 'GANTI_DENGAN_WEB_CLIENT_ID_DARI_GOOGLE_CLOUD';
+const GOOGLE_WEB_CLIENT_ID = '846894493859-vl3v947mucd6chu7tm0agi7kbitpb27a.apps.googleusercontent.com';
 const GDRIVE_TOKEN_KEY      = 'gdrive_access_token';
 const GDRIVE_REFRESH_KEY    = 'gdrive_refresh_token';
 const GDRIVE_EMAIL_KEY      = 'gdrive_user_email';
