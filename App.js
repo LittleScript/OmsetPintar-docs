@@ -1,5 +1,5 @@
 /**
- * Tracker Omset — App.js
+ * OmsetKu — App.js
  * React Native (Expo) | Storage: expo-sqlite | All screens complete
  *
  * Fixed from DeepSeek baseline:
@@ -17,12 +17,13 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
   StyleSheet, Alert, Dimensions, Platform, Modal, ActivityIndicator,
-  KeyboardAvoidingView, StatusBar, useColorScheme, Image,
+  KeyboardAvoidingView, StatusBar, useColorScheme, Image, BackHandler,
 } from 'react-native';
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Haptics from 'expo-haptics';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS     = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -43,7 +44,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '3.3.0';
+const APP_VER    = '3.4.0';
 const SCHEMA_VER = 1;
 const { width: SW } = Dimensions.get('window');
 
@@ -542,7 +543,7 @@ function LoginScreen({ onLogin }) {
       <Image source={require('./assets/icon.png')}
         style={{ width:90, height:90, borderRadius:20, marginBottom:16 }} />
       <Text style={{ color:C.text, fontSize:24, fontWeight:'800', marginBottom:8 }}>
-        Tracker Omset
+        OmsetKu
       </Text>
       <Text style={{ color:C.muted, fontSize:14, marginBottom:28, textAlign:'center' }}>
         Masukkan nama bisnis kamu
@@ -762,6 +763,7 @@ function InputScreen({ data, onSave }) {
       notes: notes.trim(),
     };
     await onSave(tx);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setJustSaved(true);
     setCustomer('');
     setAmount('');
@@ -987,14 +989,15 @@ function DashboardScreen({ data, onYearChange }) {
     return { name:m, ...totals, total:mTx.reduce((a,t)=>a+t.amount,0) };
   });
 
-  // Build chart datasets for react-native-chart-kit
-  const chartData = {
-    labels: monthly.map(m => m.name.slice(0,3)),
-    datasets: salesList.length>0 ? salesList.map((s,i) => ({
-      data: monthly.map(m => (m[s]||0) / (yearTotal||1) * 100), // % for display
-      color: (opacity=1) => COLORS[i%COLORS.length] + Math.round(opacity*255).toString(16).padStart(2,'0'),
-    })) : [{ data: monthly.map(m => m.total || 0), color: (o=1) => C.primary }],
-  };
+  // Hari tersibuk: hitung omset per hari dalam seminggu (0=Min, 1=Sen, ..., 6=Sab)
+  const DAY_LABELS = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+  const busyDays = DAY_LABELS.map((lbl, dow) => {
+    const total = yearTxns
+      .filter(t => new Date(t.date + 'T12:00:00').getDay() === dow)
+      .reduce((a, t) => a + t.amount, 0);
+    return { label: lbl, total };
+  });
+  const busyMax = busyDays.reduce((mx, d) => Math.max(mx, d.total), 0);
 
   return (
     <ScrollView style={st.container} contentContainerStyle={st.scroll}>
@@ -1078,25 +1081,99 @@ function DashboardScreen({ data, onYearChange }) {
         ))}
       </View>
 
-      {/* Monthly bar chart */}
+      {/* Monthly bar chart — stacked per sales */}
       {yearTotal > 0 && (
         <View style={st.card}>
           <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
             GRAFIK BULANAN {activeYear}
           </Text>
-          {/* Custom simple bar chart to avoid react-native-chart-kit issues */}
-          <View style={{ flexDirection:'row', alignItems:'flex-end', height:80, gap:3 }}>
+          {/* Legend */}
+          {salesList.length > 1 && (
+            <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8, marginBottom:10 }}>
+              {salesList.map((s, i) => (
+                <View key={s} style={{ flexDirection:'row', alignItems:'center', gap:4 }}>
+                  <View style={{ width:8, height:8, borderRadius:4, backgroundColor:COLORS[i%COLORS.length] }} />
+                  <Text style={{ color:C.muted, fontSize:10 }}>{s}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+          <View style={{ flexDirection:'row', alignItems:'flex-end', height:80, gap:2 }}>
             {monthly.map((m, i) => {
-              const h = monthly.reduce((max,x) => Math.max(max,x.total),0);
-              const pct = h > 0 ? Math.max(m.total/h, m.total>0?0.04:0.02) : 0.02;
+              const maxH = monthly.reduce((mx, x) => Math.max(mx, x.total), 0);
+              const barH = maxH > 0 ? Math.max((m.total / maxH) * 76, m.total > 0 ? 4 : 0) : 0;
               return (
-                <View key={i} style={{ flex:1, alignItems:'center' }}>
-                  <View style={{ backgroundColor: m.total>0 ? C.primary : C.border, borderRadius:3, height: `${pct*100}%`, width:'100%' }} />
-                  <Text style={{ color:C.muted, fontSize:8, marginTop:3 }}>{m.name}</Text>
+                <View key={i} style={{ flex:1, alignItems:'center', justifyContent:'flex-end', height:80 }}>
+                  <View style={{ width:'100%', height:barH, borderRadius:3, overflow:'hidden' }}>
+                    {salesList.map((s, si) => {
+                      const sH = m.total > 0 ? ((m[s]||0) / m.total) * barH : 0;
+                      return sH > 0 ? (
+                        <View key={s} style={{ width:'100%', height:sH, backgroundColor:COLORS[si%COLORS.length] }} />
+                      ) : null;
+                    })}
+                    {salesList.length === 0 && m.total > 0 && (
+                      <View style={{ flex:1, backgroundColor:C.primary }} />
+                    )}
+                  </View>
+                  <Text style={{ color:C.muted, fontSize:7, marginTop:3 }}>{m.name}</Text>
                 </View>
               );
             })}
           </View>
+        </View>
+      )}
+
+      {/* Distribusi Omset (Pie style) */}
+      {yearTotal > 0 && salesList.length > 1 && (
+        <View style={st.card}>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+            DISTRIBUSI OMSET {activeYear}
+          </Text>
+          {/* Proportion bar */}
+          <View style={{ height:18, borderRadius:9, overflow:'hidden', flexDirection:'row', marginBottom:14 }}>
+            {bySales.filter(bs => bs.total > 0).map(bs => (
+              <View key={bs.name} style={{ flex:bs.total, backgroundColor:bs.color }} />
+            ))}
+          </View>
+          {bySales.map(bs => (
+            <View key={bs.name} style={{ flexDirection:'row', alignItems:'center', marginBottom:8 }}>
+              <View style={{ width:10, height:10, borderRadius:5, backgroundColor:bs.color, marginRight:8 }} />
+              <Text style={{ color:C.text, fontSize:13, flex:1, fontWeight:'600' }}>{bs.name}</Text>
+              <Text style={{ color:C.muted, fontSize:12, marginRight:10 }}>
+                {yearTotal > 0 ? Math.round(bs.total / yearTotal * 100) : 0}%
+              </Text>
+              <Text style={[st.mono, { color:bs.color, fontSize:13, fontWeight:'800' }]}>
+                {toShort(bs.total)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Hari Tersibuk */}
+      {yearTotal > 0 && (
+        <View style={st.card}>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+            HARI TERSIBUK {activeYear}
+          </Text>
+          {busyDays.map((d, i) => {
+            const pct = busyMax > 0 ? d.total / busyMax : 0;
+            const isBusiest = d.total === busyMax && busyMax > 0;
+            return (
+              <View key={d.label} style={{ flexDirection:'row', alignItems:'center', marginBottom:8, gap:8 }}>
+                <Text style={{ color: isBusiest ? C.accent : C.muted, fontSize:12, fontWeight: isBusiest ? '800' : '600', width:28 }}>
+                  {d.label}
+                </Text>
+                <View style={{ flex:1, backgroundColor:C.input, borderRadius:4, height:10, overflow:'hidden' }}>
+                  <View style={{ width:`${pct*100}%`, height:'100%', backgroundColor: isBusiest ? C.accent : C.primary, borderRadius:4 }} />
+                </View>
+                <Text style={[st.mono, { color: isBusiest ? C.accent : C.muted, fontSize:11, width:52, textAlign:'right' }]}>
+                  {d.total > 0 ? toShort(d.total) : '-'}
+                </Text>
+                {isBusiest && <Text style={{ fontSize:10 }}>🔥</Text>}
+              </View>
+            );
+          })}
         </View>
       )}
     </ScrollView>
@@ -1114,6 +1191,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
   const [editTx, setEditTx]   = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editLogTx, setEditLogTx] = useState(null);
+  const [showEditDatePicker, setShowEditDatePicker] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1251,7 +1329,6 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
                 ['Nomor Bon','bonNumber','default'],
                 ['Nama Pelanggan','customerName','words'],
                 ['Nominal (Rp)','amount','number-pad'],
-                ['Tanggal (YYYY-MM-DD)','date','numbers-and-punctuation'],
                 ['Catatan','notes','default'],
               ].map(([lbl,key,kb]) => (
                 <View key={key} style={{ marginBottom:14 }}>
@@ -1263,6 +1340,32 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
                   />
                 </View>
               ))}
+              {/* Tanggal — DateTimePicker */}
+              <View style={{ marginBottom:14 }}>
+                <Text style={st.label}>📅 Tanggal</Text>
+                <TouchableOpacity
+                  onPress={() => setShowEditDatePicker(true)}
+                  style={[st.input, { flexDirection:'row', justifyContent:'space-between', alignItems:'center' }]}>
+                  <Text style={{ color:C.text, fontSize:16 }}>{fmtDate(editForm.date||'', dateFormat)}</Text>
+                  <Text style={{ color:C.muted, fontSize:14 }}>📅</Text>
+                </TouchableOpacity>
+                {showEditDatePicker && (
+                  <DateTimePicker
+                    value={new Date((editForm.date||todayStr()) + 'T12:00:00')}
+                    mode="date"
+                    display={Platform.OS==='android' ? 'calendar' : 'default'}
+                    onChange={(event, selectedDate) => {
+                      setShowEditDatePicker(false);
+                      if (selectedDate) {
+                        const y = selectedDate.getFullYear();
+                        const m = String(selectedDate.getMonth()+1).padStart(2,'0');
+                        const d = String(selectedDate.getDate()).padStart(2,'0');
+                        setEditForm(f => ({...f, date:`${y}-${m}-${d}`}));
+                      }
+                    }}
+                  />
+                )}
+              </View>
               {/* Sales selector */}
               <View style={{ marginBottom:16 }}>
                 <Text style={st.label}>Sales</Text>
@@ -1540,10 +1643,10 @@ function SettingsModal({ data, onUpdate, onImport, onClose }) {
         exportedAt:    new Date().toISOString(),
         data,
       };
-      const filename = `tracker-omset-${todayStr()}.json`;
+      const filename = `omsetku-backup-${todayStr()}.json`;
       const path = FileSystem.documentDirectory + filename;
       await FileSystem.writeAsStringAsync(path, JSON.stringify(payload, null, 2));
-      await Sharing.shareAsync(path, { mimeType:'application/json', dialogTitle:'Export Tracker Omset' });
+      await Sharing.shareAsync(path, { mimeType:'application/json', dialogTitle:'Export OmsetKu Backup' });
     } catch(e) {
       Alert.alert('Export Gagal', String(e));
     }
@@ -2124,6 +2227,22 @@ export default function App() {
     if (!dbRef.current) return;
     const fresh = await assembleData(dbRef.current);
     if (fresh) setData(fresh);
+  }, []);
+
+  // Konfirmasi keluar — Android back button
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      Alert.alert(
+        'Keluar OmsetKu?',
+        'Yakin ingin menutup aplikasi?',
+        [
+          { text: 'Batal', style: 'cancel', onPress: () => {} },
+          { text: 'Keluar', style: 'destructive', onPress: () => BackHandler.exitApp() },
+        ]
+      );
+      return true; // prevent default back behavior
+    });
+    return () => sub.remove();
   }, []);
 
   // ─── handlers ──────────────────────────────────────────────
