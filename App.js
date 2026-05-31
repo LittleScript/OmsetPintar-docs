@@ -1,5 +1,5 @@
 /**
- * OmsetKu — App.js v4.0.0
+ * OmsetKu — App.js v4.2.0
  * React Native (Expo) | SQLite offline-first | Android
  * © 2026 aliangkoko@gmail.com
  */
@@ -2225,14 +2225,14 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         let r = 0; const NCOL = 6;
 
         // Judul & meta
-        sc(ws,r,0,company,'s',S.title); mg_(mg_,r,0,r,NCOL-1);
+        sc(ws,r,0,company,'s',S.title); mg(mg_,r,0,r,NCOL-1);
         ws['!rows'] = [{hpt:34}]; r++;
         sc(ws,r,0,`Laporan Omset Tahun ${yr}   |   OmsetKu v${APP_VER}   |   ${new Date().toLocaleDateString('id-ID',{dateStyle:'long'})}`,
-          's',S.meta); mg_(mg_,r,0,r,NCOL-1); r++;
+          's',S.meta); mg(mg_,r,0,r,NCOL-1); r++;
         r++; // empty
 
         // KPI box
-        sc(ws,r,0,'  📊  RINGKASAN OMSET','s',S.secH); mg_(mg_,r,0,r,NCOL-1); r++;
+        sc(ws,r,0,'  📊  RINGKASAN OMSET','s',S.secH); mg(mg_,r,0,r,NCOL-1); r++;
         const kpiRows = [
           ['  Total Omset Tahun '+yr, yearTotal, S.lbl, S.acc],
           ['  Total Bon',             yearCount, S.lbl, {...S.r0,font:{bold:true,sz:12},alignment:{horizontal:'right'}}],
@@ -2241,14 +2241,14 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           ['  Total Pelanggan Unik',  (() => { const m={}; txns.forEach(t=>{m[t.sales+'_'+getNorm(t.customerName)]=1;}); return Object.keys(m).length; })(), S.lbl, {...S.r0,alignment:{horizontal:'right'}}],
         ];
         kpiRows.forEach(([lbl,val,ls,vs]) => {
-          sc(ws,r,0,lbl,'s',ls); mg_(mg_,r,0,r,2);
-          sc(ws,r,3,val,typeof val==='number'?'n':'s',vs); mg_(mg_,r,3,r,NCOL-1);
+          sc(ws,r,0,lbl,'s',ls); mg(mg_,r,0,r,2);
+          sc(ws,r,3,val,typeof val==='number'?'n':'s',vs); mg(mg_,r,3,r,NCOL-1);
           r++;
         });
         r++;
 
         // Per-sales table
-        sc(ws,r,0,'  👥  OMSET PER SALES','s',S.secH); mg_(mg_,r,0,r,NCOL-1); r++;
+        sc(ws,r,0,'  👥  OMSET PER SALES','s',S.secH); mg(mg_,r,0,r,NCOL-1); r++;
         ['Sales','Total Omset (Rp)','Jumlah Bon','% Total','Rata-rata/Bon','Hari Ini (Rp)'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH));
         r++;
         const today_ = todayStr();
@@ -2276,7 +2276,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         r++;
 
         // Rekap bulanan
-        sc(ws,r,0,'  📅  REKAP BULANAN '+yr,'s',S.secH); mg_(mg_,r,0,r,NCOL-1); r++;
+        sc(ws,r,0,'  📅  REKAP BULANAN '+yr,'s',S.secH); mg(mg_,r,0,r,NCOL-1); r++;
         const mCols = ['Bulan',...salesL,'TOTAL'];
         mCols.forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
         MONTHS_F.forEach((m_,mi)=>{
@@ -2305,8 +2305,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           let r=0;
           const sTotal=sTxns.reduce((a,t)=>a+t.amount,0);
           // Header
-          sc(ws,r,0,`${s}  —  Riwayat Transaksi`,'s',S.title); mg_(mg_,r,0,r,4); r++;
-          sc(ws,r,0,`${sTxns.length} bon  |  Total: Rp ${sTotal.toLocaleString('id-ID')}  |  ${company}`,'s',S.meta); mg_(mg_,r,0,r,4); r++;
+          sc(ws,r,0,`${s}  —  Riwayat Transaksi`,'s',S.title); mg(mg_,r,0,r,4); r++;
+          sc(ws,r,0,`${sTxns.length} bon  |  Total: Rp ${sTotal.toLocaleString('id-ID')}  |  ${company}`,'s',S.meta); mg(mg_,r,0,r,4); r++;
           ['No. Bon','Tanggal','Nama Pelanggan','Total (Rp)','Catatan'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
           sTxns.forEach((t,idx)=>{
             const a=idx%2===1;
@@ -2316,7 +2316,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             sc(ws,r,3,t.amount,'n',a?S.r1N:S.r0N);
             sc(ws,r,4,t.notes||'','s',a?S.r1:S.r0); r++;
           });
-          sc(ws,r,0,'TOTAL','s',S.tot); mg_(mg_,r,0,r,2);
+          sc(ws,r,0,'TOTAL','s',S.tot); mg(mg_,r,0,r,2);
           sc(ws,r,1,'','s',S.tot); sc(ws,r,2,'','s',S.tot);
           sc(ws,r,3,sTotal,'n',S.totN); sc(ws,r,4,'','s',S.tot); r++;
           ws['!merges']=mg_; setRef(ws,r,4);
@@ -2330,8 +2330,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
       // ── PER SALES ─────────────────────────────────────────────────
       if (excelChecked.per_sales) {
         const ws={}; const mg_=[]; let r=0;
-        sc(ws,r,0,'Rekap per Sales','s',S.title); mg_(mg_,r,0,r,4); r++;
-        sc(ws,r,0,`${company}  |  Tahun ${yr}`,'s',S.meta); mg_(mg_,r,0,r,4); r++;
+        sc(ws,r,0,'Rekap per Sales','s',S.title); mg(mg_,r,0,r,4); r++;
+        sc(ws,r,0,`${company}  |  Tahun ${yr}`,'s',S.meta); mg(mg_,r,0,r,4); r++;
         ['Sales','Total Omset (Rp)','Jumlah Bon','Rata-rata/Bon (Rp)','% Kontribusi'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
         salesL.forEach((s,idx)=>{
           const st=txns.filter(t=>t.sales===s);
@@ -2364,8 +2364,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           if(t.date>cMap[k].last) cMap[k].last=t.date;
         });
         const ws={}; const mg_=[]; let r=0;
-        sc(ws,r,0,'Daftar Pelanggan','s',S.title); mg_(mg_,r,0,r,5); r++;
-        sc(ws,r,0,`${company}  |  ${Object.keys(cMap).length} pelanggan unik`,'s',S.meta); mg_(mg_,r,0,r,5); r++;
+        sc(ws,r,0,'Daftar Pelanggan','s',S.title); mg(mg_,r,0,r,5); r++;
+        sc(ws,r,0,`${company}  |  ${Object.keys(cMap).length} pelanggan unik`,'s',S.meta); mg(mg_,r,0,r,5); r++;
         ['No','Nama Pelanggan','Sales','Jumlah Bon','Total Belanja (Rp)','Terakhir Transaksi'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
         Object.values(cMap).sort((a,b)=>a.name.localeCompare(b.name,'id')).forEach((c,i)=>{
           const a=i%2===1;
@@ -2383,8 +2383,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
       // ── RANKING ───────────────────────────────────────────────────
       if (excelChecked.ranking) {
         const ws={}; const mg_=[]; let r=0;
-        sc(ws,r,0,'Ranking Pelanggan','s',S.title); mg_(mg_,r,0,r,5); r++;
-        sc(ws,r,0,`${company}  |  All Time`,'s',S.meta); mg_(mg_,r,0,r,5); r++;
+        sc(ws,r,0,'Ranking Pelanggan','s',S.title); mg(mg_,r,0,r,5); r++;
+        sc(ws,r,0,`${company}  |  All Time`,'s',S.meta); mg(mg_,r,0,r,5); r++;
         ['Rank','Nama Pelanggan','Sales','Jumlah Bon','Total Belanja (Rp)','Terakhir Transaksi'].forEach((h,ci)=>sc(ws,r,ci,h,'s',S.colH)); r++;
         salesL.forEach(s=>{
           getRanking(txns,s).forEach((rv,i)=>{
