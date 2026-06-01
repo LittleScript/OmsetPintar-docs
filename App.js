@@ -1,5 +1,5 @@
 /**
- * OmsetKu — App.js v4.5.0
+ * OmsetKu — App.js v4.6.0
  * Entry point: imports dari src/, render App component
  */
 
@@ -12,6 +12,7 @@ import * as AuthSession       from 'expo-auth-session';
 import * as Google            from 'expo-auth-session/providers/google';
 import * as Notifications     from 'expo-notifications';
 import * as WebBrowser        from 'expo-web-browser';
+import * as StoreReview       from 'expo-store-review';
 
 // ── src/ foundations ─────────────────────────────────────────────────────────
 import { ThemeContext, getStyles }      from './src/theme';
@@ -36,6 +37,19 @@ import {
   isGdriveTokenValid, uploadToDrive,
   scheduleReminder, cancelReminder,
 } from './src/services';
+
+// ── widget ───────────────────────────────────────────────────────────────────
+import { registerWidgetTaskHandler } from 'react-native-android-widget';
+import { widgetTaskHandler }         from './src/widget/widgetTaskHandler';
+import { OmsetKuWidget }             from './src/widget/OmsetKuWidget';
+
+// Daftarkan widget task handler (dipanggil Android saat widget perlu render)
+// Harus di-register di module level sebelum komponen di-mount
+let updateWidgetFn = null;
+try {
+  registerWidgetTaskHandler(widgetTaskHandler);
+  updateWidgetFn = require('react-native-android-widget').updateWidget;
+} catch(_) {}
 
 // ── screens ───────────────────────────────────────────────────────────────────
 import OnboardingScreen from './src/screens/OnboardingScreen';
@@ -90,6 +104,8 @@ export default function App() {
         }
         setData(loaded || { isSetupComplete: false, salesList: [], transactions: [], companyName: '', bonConfig:{prefix:'INV',separator:'-',digitLength:5}, dateFormat:'dd/mm/yyyy', activeYear:new Date().getFullYear(), lastDate:todayStr(), lastSales:'', nextSeq:1 });
         setDbReady(true);
+        // Update widget dengan data terbaru saat app dibuka
+        if (loaded) setTimeout(() => refreshWidget(loaded), 500);
       } catch(e) {
         Alert.alert('Database Error', String(e));
       } finally {
@@ -375,6 +391,50 @@ export default function App() {
     await reloadData();
   }, [reloadData]);
 
+  // ── Widget Update ──────────────────────────────────────────────────────────
+  const refreshWidget = useCallback(async (freshData) => {
+    if (!updateWidgetFn) return;
+    try {
+      const d = freshData || data;
+      if (!d) return;
+      const today = todayStr();
+      const todayTxns = (d.transactions || []).filter(t => !t.deletedAt && t.date === today);
+      const todayTotal = todayTxns.reduce((a, t) => a + t.amount, 0);
+      const salesLines = d.salesList
+        .map(s => {
+          const st = todayTxns.filter(t => t.sales === s);
+          if (!st.length) return null;
+          const tot = st.reduce((a, t) => a + t.amount, 0);
+          return `${s}: ${tot >= 1e6 ? (tot/1e6).toFixed(1)+'Jt' : tot >= 1e3 ? (tot/1e3).toFixed(0)+'K' : tot}`;
+        })
+        .filter(Boolean)
+        .join('  ');
+      const now = new Date().toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit' });
+      await updateWidgetFn('OmsetKuWidget', OmsetKuWidget, {
+        todayTotal,
+        todayCount: todayTxns.length,
+        companyName: d.companyName || 'OmsetKu',
+        salesLines,
+        lastUpdated: now,
+      });
+    } catch(_) {}
+  }, [data]);
+
+  // ── In-App Review (setelah 10 transaksi tersimpan) ─────────────────────────
+  const handleInAppReview = useCallback(async () => {
+    try {
+      const reviewed = await SecureStore.getItemAsync('review_requested');
+      if (reviewed) return;
+      const countStr = await SecureStore.getItemAsync('save_count');
+      const count = parseInt(countStr || '0', 10) + 1;
+      await SecureStore.setItemAsync('save_count', String(count));
+      if (count === 10 && await StoreReview.hasAction()) {
+        await StoreReview.requestReview();
+        await SecureStore.setItemAsync('review_requested', '1');
+      }
+    } catch(_) {}
+  }, []);
+
   const handleSetupComplete = useCallback(async (setup) => {
     setSaveState('saving');
     try {
@@ -391,9 +451,13 @@ export default function App() {
       await insertTransaction(dbRef.current, tx);
       await reloadData();
       setSaveState('saved');
+      // Update widget + trigger in-app review setelah bon ke-10
+      handleInAppReview();
+      const fresh = await assembleData(dbRef.current);
+      refreshWidget(fresh);
     } catch(e) { setSaveState('error'); Alert.alert('Error', String(e)); }
     setTimeout(() => setSaveState('idle'), 2000);
-  }, [reloadData]);
+  }, [reloadData, handleInAppReview, refreshWidget]);
 
   const handleDelete = useCallback(async (id) => {
     await softDeleteTransaction(dbRef.current, id);
