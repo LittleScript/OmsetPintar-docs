@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.2.0';
+const APP_VER    = '4.2.1';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -263,25 +263,12 @@ async function getDb() {
 async function initDb() {
   const db = await getDb();
   await db.execAsync(`PRAGMA journal_mode = WAL;`);
-  // Drop unique bon constraint if it exists (for existing installs)
-  try { await db.execAsync(`DROP INDEX IF EXISTS idx_bon_unique`); } catch(e) {}
-  // Add edit-tracking columns if not exist
-  try { await db.execAsync(`ALTER TABLE transactions ADD COLUMN edited_at TEXT`); } catch(e) {}
-  try { await db.execAsync(`ALTER TABLE transactions ADD COLUMN original_values TEXT`); } catch(e) {}
-  // Migration: add theme_mode column if not exists
-  try {
-    await db.execAsync(`ALTER TABLE settings ADD COLUMN theme_mode TEXT NOT NULL DEFAULT 'dark'`);
-  } catch(e) { /* column already exists, ok */ }
-  try {
-    await db.execAsync(`ALTER TABLE settings ADD COLUMN pin_lock_enabled INTEGER NOT NULL DEFAULT 0`);
-  } catch(e) {}
-  try {
-    await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_enabled INTEGER NOT NULL DEFAULT 0`);
-  } catch(e) {}
-  try {
-    await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_hour INTEGER NOT NULL DEFAULT 20`);
-  } catch(e) {}
   await db.execAsync(`PRAGMA foreign_keys = ON;`);
+
+  // CREATE TABLES DULU — fresh install langsung dapat semua kolom (theme_mode,
+  // pin/notif, edit-tracking). Migrasi ALTER di bawah hanya untuk install lama.
+  // (Dulu ALTER ditaruh SEBELUM CREATE → pada fresh install ALTER gagal diam-diam
+  //  karena tabel belum ada, sehingga kolom-kolom baru tak pernah terbentuk.)
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS settings (
       id                 INTEGER PRIMARY KEY DEFAULT 1 CHECK(id=1),
@@ -294,7 +281,11 @@ async function initDb() {
       active_year        INTEGER NOT NULL DEFAULT ${new Date().getFullYear()},
       last_date          TEXT    NOT NULL DEFAULT '${todayStr()}',
       last_sales         TEXT    NOT NULL DEFAULT '',
-      current_seq        INTEGER NOT NULL DEFAULT 1
+      current_seq        INTEGER NOT NULL DEFAULT 1,
+      theme_mode         TEXT    NOT NULL DEFAULT 'dark',
+      pin_lock_enabled   INTEGER NOT NULL DEFAULT 0,
+      notif_enabled      INTEGER NOT NULL DEFAULT 0,
+      notif_hour         INTEGER NOT NULL DEFAULT 20
     );
     INSERT OR IGNORE INTO settings (id) VALUES (1);
 
@@ -320,7 +311,9 @@ async function initDb() {
       notes            TEXT    NOT NULL DEFAULT '',
       created_at       TEXT    NOT NULL,
       updated_at       TEXT    NOT NULL,
-      deleted_at       TEXT
+      deleted_at       TEXT,
+      edited_at        TEXT,
+      original_values  TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_txn_date      ON transactions(transaction_date)  WHERE deleted_at IS NULL;
@@ -329,6 +322,16 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_txn_customer  ON transactions(sales_name, customer_norm) WHERE deleted_at IS NULL;
     -- NOTE: NO unique index on bon_number — same number allowed across sales or after reset
   `);
+
+  // MIGRASI install lama — tambah kolom bila tabel sudah ada tapi belum punya kolomnya.
+  // Pada fresh install kolom sudah ada di CREATE → ALTER gagal "duplicate column" & ditelan catch (aman).
+  try { await db.execAsync(`DROP INDEX IF EXISTS idx_bon_unique`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE transactions ADD COLUMN edited_at TEXT`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE transactions ADD COLUMN original_values TEXT`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE settings ADD COLUMN theme_mode TEXT NOT NULL DEFAULT 'dark'`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE settings ADD COLUMN pin_lock_enabled INTEGER NOT NULL DEFAULT 0`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_enabled INTEGER NOT NULL DEFAULT 0`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_hour INTEGER NOT NULL DEFAULT 20`); } catch(e) {}
 }
 
 // ─── DATA ACCESS ──────────────────────────────────────────────────────────────
@@ -1590,7 +1593,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
               </TouchableOpacity>
               <TouchableOpacity onPress={() => confirmDelete(tx)}
                 style={{ backgroundColor:'transparent', paddingHorizontal:4, paddingVertical:4 }}>
-                <Text style={{ color:'#334155', fontSize:16 }}>✕</Text>
+                <Text style={{ color:C.muted, fontSize:16 }}>✕</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -1766,7 +1769,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
                   ['Sales',   editLogTx.originalValues.sales],
                   ['Pelanggan', editLogTx.originalValues.customerName],
                   ['Nominal', toIdr(editLogTx.originalValues.amount)],
-                  ['Tanggal', editLogTx.originalValues.date],
+                  ['Tanggal', fmtDate(editLogTx.originalValues.date, dateFormat)],
                   ['Catatan', editLogTx.originalValues.notes || '-'],
                 ].map(([label, val]) => (
                   <View key={label} style={{ flexDirection:'row', marginBottom:4 }}>
@@ -1781,7 +1784,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
                   ['Sales',   editLogTx.sales],
                   ['Pelanggan', editLogTx.customerName],
                   ['Nominal', toIdr(editLogTx.amount)],
-                  ['Tanggal', editLogTx.date],
+                  ['Tanggal', fmtDate(editLogTx.date, dateFormat)],
                   ['Catatan', editLogTx.notes || '-'],
                 ].map(([label, val]) => (
                   <View key={label} style={{ flexDirection:'row', marginBottom:4 }}>
@@ -2176,6 +2179,20 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
     try {
       setExporting(true);
       const wb       = XLSX.utils.book_new();
+      // Nama sheet Excel: max 31 char, tak boleh ada : \ / ? * [ ] dan harus unik
+      // (cegah crash bila nama sales mengandung karakter ilegal / bentrok nama sheet lain)
+      const usedSheetNames = new Set();
+      const safeSheetName = (raw) => {
+        let name = String(raw || 'Sheet').replace(/[:\\/?*\[\]]/g, ' ').trim().slice(0, 31) || 'Sheet';
+        const base = name; let i = 2;
+        while (usedSheetNames.has(name.toLowerCase())) {
+          const suffix = ` (${i})`;
+          name = base.slice(0, 31 - suffix.length) + suffix;
+          i++;
+        }
+        usedSheetNames.add(name.toLowerCase());
+        return name;
+      };
       const txns     = (data.transactions||[]).filter(t => !t.deletedAt);
       const dfmt     = data.dateFormat || 'dd/mm/yyyy';
       const yr       = data.activeYear || new Date().getFullYear();
@@ -2294,7 +2311,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
 
         ws['!merges']=mg_; setRef(ws,r,NCOL-1);
         ws['!cols']=[{wch:26},{wch:18},{wch:12},{wch:10},{wch:16},{wch:16}];
-        XLSX.utils.book_append_sheet(wb,ws,'📊 Ringkasan');
+        XLSX.utils.book_append_sheet(wb,ws,safeSheetName('📊 Ringkasan'));
       }
 
       // ── TRANSACTION SHEETS ────────────────────────────────────────
@@ -2323,7 +2340,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           ws['!cols']=[{wch:14},{wch:13},{wch:28},{wch:16},{wch:22}];
           ws['!rows']=[{hpt:28},{hpt:18},{hpt:20}];
           ws['!autofilter']={ref:'A3:E3'};
-          XLSX.utils.book_append_sheet(wb,ws,s.slice(0,31));
+          XLSX.utils.book_append_sheet(wb,ws,safeSheetName(s));
         });
       }
 
@@ -2351,7 +2368,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         ws['!merges']=mg_; setRef(ws,r,4);
         ws['!cols']=[{wch:18},{wch:18},{wch:13},{wch:18},{wch:14}];
         ws['!rows']=[{hpt:24},{hpt:18}];
-        XLSX.utils.book_append_sheet(wb,ws,'Per Sales');
+        XLSX.utils.book_append_sheet(wb,ws,safeSheetName('Per Sales'));
       }
 
       // ── PELANGGAN ─────────────────────────────────────────────────
@@ -2377,7 +2394,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         ws['!merges']=mg_; setRef(ws,r,5);
         ws['!cols']=[{wch:5},{wch:28},{wch:12},{wch:12},{wch:18},{wch:16}];
         ws['!rows']=[{hpt:24},{hpt:18}]; ws['!autofilter']={ref:'A3:F3'};
-        XLSX.utils.book_append_sheet(wb,ws,'Pelanggan');
+        XLSX.utils.book_append_sheet(wb,ws,safeSheetName('Pelanggan'));
       }
 
       // ── RANKING ───────────────────────────────────────────────────
@@ -2399,7 +2416,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         ws['!merges']=mg_; setRef(ws,r,5);
         ws['!cols']=[{wch:6},{wch:28},{wch:12},{wch:12},{wch:18},{wch:16}];
         ws['!rows']=[{hpt:24},{hpt:18}];
-        XLSX.utils.book_append_sheet(wb,ws,'Ranking');
+        XLSX.utils.book_append_sheet(wb,ws,safeSheetName('Ranking'));
       }
 
       const base64  = XLSX.write(wb, { type:'base64', bookType:'xlsx', cellStyles:true });
@@ -3498,6 +3515,12 @@ export default function App() {
       const last  = await SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY);
       if (email) {
         setDriveEmail(email);
+        // Re-register background backup task — hilang setelah reinstall/update app
+        BackgroundFetch.registerTaskAsync(GDRIVE_TASK_NAME, {
+          minimumInterval: 15 * 60,
+          stopOnTerminate: false,
+          startOnBoot: true,
+        }).catch(() => {});
         const valid = await isGdriveTokenValid();
         setDriveTokenExpired(!valid);
       }
