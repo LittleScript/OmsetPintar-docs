@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.4.0';
+const APP_VER    = '4.4.1';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ const SCHEMA_VER = 1;
 //   2. Buat OAuth client → Application type: Android
 //      Package name: com.omsetku.app  |  SHA-1: [dari langkah 1]
 //   3. Isi GOOGLE_ANDROID_CLIENT_ID dengan client ID yang didapat
-const GOOGLE_ANDROID_CLIENT_ID = 'ISIAN_ANDROID_CLIENT_ID.apps.googleusercontent.com';
+const GOOGLE_ANDROID_CLIENT_ID = '846894493859-7mnsos08bck0on5p03v66uopqbeld1g6.apps.googleusercontent.com';
 
 const GDRIVE_REDIRECT_URI    = 'com.omsetku.app:/oauth2redirect';
 const GDRIVE_TOKEN_KEY       = 'gdrive_access_token';
