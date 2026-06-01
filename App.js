@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.4.2';
+const APP_VER    = '4.4.3';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -2184,7 +2184,10 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   const [showExcelMenu,     setShowExcelMenu]     = useState(false);
   const [jsonRestorePreview,setJsonRestorePreview] = useState(null);
   const [jsonRestoring,     setJsonRestoring]      = useState(false);
-  const [backupHour,   setBackupHour]     = useState(23);
+  const [backupHour,        setBackupHour]         = useState(23);
+  const [driveFileList,     setDriveFileList]      = useState([]);
+  const [showDriveFiles,    setShowDriveFiles]     = useState(false);
+  const [driveFilesLoading, setDriveFilesLoading]  = useState(false);
 
   useEffect(() => {
     SecureStore.getItemAsync(GDRIVE_HOUR_KEY)
@@ -2371,6 +2374,93 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
       });
     } catch(e) {
       Alert.alert('Error membaca file', String(e));
+    }
+  };
+
+  // ── Restore dari Google Drive ──────────────────────────────────────────────
+  const handleListDriveFiles = async () => {
+    const valid = await isGdriveTokenValid();
+    if (!valid) {
+      Alert.alert('⚠️ Sesi Expired', 'Reconnect Google Drive dulu di bagian atas.');
+      return;
+    }
+    setDriveFilesLoading(true);
+    try {
+      const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
+      // Cari folder OmsetKu Backup
+      const qF = encodeURIComponent(`name='OmsetKu Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+      const folderRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${qF}&fields=files(id)`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const folderData = await folderRes.json();
+      const folderId = folderData.files?.[0]?.id;
+      if (!folderId) {
+        Alert.alert('', 'Belum ada folder backup di Google Drive.\nBackup dulu sebelum restore.');
+        return;
+      }
+      // Daftar file di folder
+      const qFiles = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+      const filesRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${qFiles}&fields=files(id,name,modifiedTime,size)&orderBy=modifiedTime+desc&pageSize=30`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const filesData = await filesRes.json();
+      const files = filesData.files || [];
+      if (!files.length) {
+        Alert.alert('', 'Belum ada file backup di Google Drive.');
+        return;
+      }
+      setDriveFileList(files);
+      setShowDriveFiles(true);
+    } catch(e) {
+      Alert.alert('Gagal Memuat', String(e));
+    } finally {
+      setDriveFilesLoading(false);
+    }
+  };
+
+  const handleDownloadDriveRestore = async (file) => {
+    setShowDriveFiles(false);
+    setDriveFilesLoading(true);
+    try {
+      const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const text = await res.text();
+      let backup;
+      try { backup = JSON.parse(text); }
+      catch(e) { Alert.alert('Format Tidak Valid', 'File bukan JSON yang valid'); return; }
+      if (!backup?.data?.transactions) {
+        Alert.alert('Format Tidak Dikenali', 'Bukan file backup OmsetKu yang valid.');
+        return;
+      }
+      // Reuse alur preview restore JSON yang sudah ada
+      const allTxns    = (backup.data.transactions || []).filter(t => !t.deletedAt);
+      const salesNames = backup.data.salesList || [];
+      const existingActive = (data.transactions || []).filter(t => !t.deletedAt);
+      const dupeRows = [], nonDupeRows = [];
+      allTxns.forEach(t => {
+        const isDupe = existingActive.some(e =>
+          e.bonNumber === t.bonNumber &&
+          e.date === (t.date || t.transaction_date) &&
+          getNorm(e.customerName) === getNorm(t.customerName || t.customer_name || '') &&
+          e.amount === t.amount
+        );
+        (isDupe ? dupeRows : nonDupeRows).push(t);
+      });
+      setJsonRestorePreview({
+        allTxns, nonDupeRows, dupeRows, salesNames,
+        exportedAt: backup.exportedAt,
+        appVersion: backup.appVersion || '?',
+        totalAmt:   allTxns.reduce((a, t) => a + (t.amount || 0), 0),
+      });
+    } catch(e) {
+      Alert.alert('Gagal Download', String(e));
+    } finally {
+      setDriveFilesLoading(false);
     }
   };
 
@@ -2757,14 +2847,24 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   <View style={{ width:10, height:10, borderRadius:5,
                     backgroundColor: driveTokenExpired ? C.warning : C.success }} />
                 </View>
-                <TouchableOpacity onPress={onDriveBackup} disabled={driveSyncing}
-                  style={{ backgroundColor:C.success+'22', borderWidth:1.5, borderColor:C.success,
-                    borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:10,
-                    opacity: driveSyncing ? 0.6 : 1 }}>
-                  <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>
-                    {driveSyncing ? '☁️ Mengunggah...' : '☁️ Backup Sekarang'}
-                  </Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
+                  <TouchableOpacity onPress={onDriveBackup} disabled={driveSyncing}
+                    style={{ flex:1, backgroundColor:C.success+'22', borderWidth:1.5, borderColor:C.success,
+                      borderRadius:14, paddingVertical:13, alignItems:'center',
+                      opacity: driveSyncing ? 0.6 : 1 }}>
+                    <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>
+                      {driveSyncing ? '⏳ Upload...' : '☁️ Backup'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={handleListDriveFiles} disabled={driveFilesLoading}
+                    style={{ flex:1, backgroundColor:C.primary+'22', borderWidth:1.5, borderColor:C.primary,
+                      borderRadius:14, paddingVertical:13, alignItems:'center',
+                      opacity: driveFilesLoading ? 0.6 : 1 }}>
+                    <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>
+                      {driveFilesLoading ? '⏳ Memuat...' : '☁️ Restore'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
                 {/* Jam backup otomatis */}
                 <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between',
                   backgroundColor:C.input, borderRadius:12, padding:12, marginBottom:10 }}>
@@ -3241,6 +3341,55 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                 onPress={() => setImportPreview(null)}
                 style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:16, alignItems:'center', opacity: importing ? 0.4 : 1 }}>
                 <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* ── Modal Daftar Backup di Google Drive ── */}
+      {showDriveFiles && (
+        <Modal visible animationType="slide" transparent onRequestClose={() => setShowDriveFiles(false)}>
+          <View style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.65)' }}>
+            <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24,
+              padding:20, paddingBottom:36 }}>
+              <Text style={{ color:C.text, fontSize:17, fontWeight:'800', marginBottom:4 }}>
+                ☁️ Pilih Backup dari Drive
+              </Text>
+              <Text style={{ color:C.muted, fontSize:11, marginBottom:14 }}>
+                {driveFileList.length} file tersedia · tap untuk restore
+              </Text>
+              <ScrollView style={{ maxHeight:360 }}>
+                {driveFileList.map(file => {
+                  // Extract tanggal dari nama file: omsetku-backup-YYYY-MM-DD.json
+                  const dateMatch = file.name.match(/(\d{4}-\d{2}-\d{2})/);
+                  const dateLabel = dateMatch
+                    ? fmtDate(dateMatch[1], data.dateFormat)
+                    : new Date(file.modifiedTime).toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' });
+                  const sizeKB = file.size ? `${Math.round(parseInt(file.size,10)/1024)} KB` : '';
+                  return (
+                    <TouchableOpacity key={file.id}
+                      onPress={() => handleDownloadDriveRestore(file)}
+                      style={{ flexDirection:'row', alignItems:'center', paddingVertical:12,
+                        borderBottomWidth:1, borderBottomColor:C.border, gap:12 }}>
+                      <Text style={{ fontSize:24 }}>📄</Text>
+                      <View style={{ flex:1 }}>
+                        <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>{dateLabel}</Text>
+                        <Text style={{ color:C.muted, fontSize:11, marginTop:1 }}>
+                          {new Date(file.modifiedTime).toLocaleTimeString('id-ID',
+                            { hour:'2-digit', minute:'2-digit' })}
+                          {sizeKB ? `  ·  ${sizeKB}` : ''}
+                        </Text>
+                      </View>
+                      <Text style={{ color:C.primary, fontSize:13, fontWeight:'700' }}>Restore ›</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+              <TouchableOpacity onPress={() => setShowDriveFiles(false)}
+                style={{ marginTop:14, backgroundColor:C.input, borderRadius:12,
+                  padding:12, alignItems:'center' }}>
+                <Text style={{ color:C.muted, fontWeight:'700' }}>Batal</Text>
               </TouchableOpacity>
             </View>
           </View>

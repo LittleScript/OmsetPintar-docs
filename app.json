@@ -2,7 +2,7 @@
   "expo": {
     "name": "OmsetKu",
     "slug": "omsetku",
-    "version": "4.4.2",
+    "version": "4.4.3",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#071018",
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.omsetku.app",
-      "versionCode": 20,
+      "versionCode": 21,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#071018"
