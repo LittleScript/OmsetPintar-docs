@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.2.3';
+const APP_VER    = '4.3.0';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -81,7 +81,13 @@ Notifications.setNotificationHandler({
 });
 
 // Jadwalkan ulang notifikasi harian
-async function scheduleReminder(hour) {
+// forceReschedule=false (startup): skip jika sudah ada — cegah notif langsung tembak
+// forceReschedule=true (aksi user): selalu cancel & jadwal ulang sesuai jam baru
+async function scheduleReminder(hour, forceReschedule = false) {
+  if (!forceReschedule) {
+    const existing = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+    if (existing.some(n => n.identifier === NOTIF_TASK_ID)) return;
+  }
   await Notifications.cancelScheduledNotificationAsync(NOTIF_TASK_ID).catch(() => {});
   await Notifications.scheduleNotificationAsync({
     identifier: NOTIF_TASK_ID,
@@ -90,7 +96,9 @@ async function scheduleReminder(hour) {
       body: 'Jangan lupa catat omset hari ini!',
       sound: true,
     },
-    trigger: { hour, minute: 0, repeats: true },
+    // 'daily' type: Android menghitung NEXT occurrence jam tsb (hari ini / besok)
+    // Cegah notif langsung tembak jika jam sudah lewat hari ini
+    trigger: { type: 'daily', hour, minute: 0 },
   });
 }
 
@@ -321,6 +329,14 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_txn_yearmonth ON transactions(year_month)        WHERE deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_txn_customer  ON transactions(sales_name, customer_norm) WHERE deleted_at IS NULL;
     -- NOTE: NO unique index on bon_number — same number allowed across sales or after reset
+
+    CREATE TABLE IF NOT EXISTS typo_ignored (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      sales   TEXT NOT NULL,
+      norm_a  TEXT NOT NULL,
+      norm_b  TEXT NOT NULL,
+      UNIQUE(sales, norm_a, norm_b)
+    );
   `);
 
   // MIGRASI install lama — tambah kolom bila tabel sudah ada tapi belum punya kolomnya.
@@ -373,6 +389,7 @@ async function assembleData(db) {
   if (!cfg) return null;
   const salesRows = await loadSales(db);
   const txRows    = await loadTransactions(db);
+  const ignoredTypoPairs = await loadIgnoredTypoPairs(db);
   return {
     themeMode:      cfg.theme_mode || 'dark',
     pinLockEnabled: !!cfg.pin_lock_enabled,
@@ -390,9 +407,10 @@ async function assembleData(db) {
     lastDate:    cfg.last_date   || todayStr(),
     lastSales:   cfg.last_sales  || (salesRows[0]?.name || ''),
     nextSeq:     cfg.current_seq || 1,
-    salesList:   salesRows.map(s => s.name),
-    salesData:   salesRows,
-    transactions:txRows.map(dbRowToTx),
+    salesList:        salesRows.map(s => s.name),
+    salesData:        salesRows,
+    transactions:     txRows.map(dbRowToTx),
+    ignoredTypoPairs, // Set<"sales|||normA|||normB"> untuk filter Cek Typo
   };
 }
 
@@ -528,6 +546,19 @@ async function deactivateSales(db, name) {
   await db.runAsync(`UPDATE sales SET active=0 WHERE name=?`, [name]);
 }
 
+async function addIgnoredTypoPair(db, sales, normA, normB) {
+  const [a, b] = [normA, normB].sort();
+  await db.runAsync(
+    `INSERT OR IGNORE INTO typo_ignored (sales, norm_a, norm_b) VALUES (?,?,?)`,
+    [sales, a, b]
+  );
+}
+
+async function loadIgnoredTypoPairs(db) {
+  const rows = await db.getAllAsync('SELECT sales, norm_a, norm_b FROM typo_ignored');
+  return new Set(rows.map(r => `${r.sales}|||${r.norm_a}|||${r.norm_b}`));
+}
+
 async function mergeCustomerName(db, oldName, newName, sales) {
   const newNorm = getNorm(newName);
   await db.runAsync(
@@ -634,8 +665,8 @@ function hasWordOverlap(nameA, nameB) {
   const allMatch = shorter.every(w => longer.includes(w));
   if (!allMatch) return false;
 
-  // Setidaknya ada 1 kata >= 4 huruf yang cocok (hindari false positive nama 1 huruf)
-  return shorter.some(w => w.length >= 4);
+  // Setidaknya ada 1 kata >= 5 huruf yang cocok (lebih ketat, hindari false positive)
+  return shorter.some(w => w.length >= 5);
 }
 
 function findSimilarNames(transactions) {
@@ -663,9 +694,12 @@ function findSimilarNames(transactions) {
 
       const dist      = levenshtein(normA, normB);
       const maxLen    = Math.max(normA.length, normB.length);
-      const threshold = maxLen <= 4 ? 1 : 2;
+      const minLen    = Math.min(normA.length, normB.length);
+      if (minLen < 3) continue; // nama terlalu pendek → false positive tinggi
+      // Threshold ketat: hanya 1-char-diff, kecuali nama panjang (≥7 char) → boleh 2
+      const threshold = maxLen >= 7 ? 2 : 1;
 
-      // Cek 1: Levenshtein (typo 1-2 karakter — "andi" vs "andu")
+      // Cek 1: Levenshtein (typo 1 karakter — "andi" vs "andy")
       const isTypo = dist > 0 && dist <= threshold;
 
       // Cek 2: Word overlap (nama parsial — "andi hutapea" vs "hutapea")
@@ -2731,7 +2765,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                       return;
                     }
                     setNotifEnabled(true);
-                    await scheduleReminder(notifHour);
+                    await scheduleReminder(notifHour, true);
                     onUpdate({ notifEnabled: true, notifHour });
                     Alert.alert('🔔 Notifikasi Aktif', `Reminder akan muncul setiap hari jam ${String(notifHour).padStart(2,'0')}:00`);
                   } else {
@@ -2756,7 +2790,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     onPress={async () => {
                       const h = notifHour === 0 ? 23 : notifHour - 1;
                       setNotifHour(h);
-                      await scheduleReminder(h);
+                      await scheduleReminder(h, true);
                       onUpdate({ notifEnabled: true, notifHour: h });
                     }}
                     style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
@@ -2769,7 +2803,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     onPress={async () => {
                       const h = notifHour === 23 ? 0 : notifHour + 1;
                       setNotifHour(h);
-                      await scheduleReminder(h);
+                      await scheduleReminder(h, true);
                       onUpdate({ notifEnabled: true, notifHour: h });
                     }}
                     style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
@@ -3072,7 +3106,7 @@ function getCustomerList(transactions, salesFilter) {
   );
 }
 
-function CustomersScreen({ data, onMerge }) {
+function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
   const { salesList, transactions, dateFormat } = data;
@@ -3089,7 +3123,13 @@ function CustomersScreen({ data, onMerge }) {
     setTypoLoading(true);
     // setTimeout agar React sempat re-render "Mengecek..." sebelum komputasi dimulai
     setTimeout(() => {
-      const pairs = findSimilarNames(transactions);
+      const ignored = data.ignoredTypoPairs || new Set();
+      const allPairs = findSimilarNames(transactions);
+      // Filter pasangan yang sudah pernah di-abaikan (persisten lintas sesi)
+      const pairs = allPairs.filter(p => {
+        const [a, b] = [getNorm(p.nameA), getNorm(p.nameB)].sort();
+        return !ignored.has(`${p.sales}|||${a}|||${b}`);
+      });
       setTypoPairs(pairs);
       setDismissedPairs(new Set());
       setTypoLoading(false);
@@ -3317,9 +3357,15 @@ function CustomersScreen({ data, onMerge }) {
                             <Text style={{ color:C.accent, fontSize:10, marginTop:4, fontWeight:'700' }}>Pakai ini ✓</Text>
                           </TouchableOpacity>
                         </View>
-                        {/* Abaikan */}
+                        {/* Abaikan — disimpan ke DB, tidak muncul lagi di sesi berikutnya */}
                         <TouchableOpacity
-                          onPress={() => setDismissedPairs(prev => new Set([...prev, `${pair.nameA}|||${pair.nameB}`]))}
+                          onPress={async () => {
+                            // Sembunyikan langsung di sesi ini
+                            setDismissedPairs(prev => new Set([...prev, `${pair.nameA}|||${pair.nameB}`]));
+                            // Simpan ke DB agar tidak muncul lagi saat Cek Typo berikutnya
+                            const [a, b] = [getNorm(pair.nameA), getNorm(pair.nameB)].sort();
+                            await onIgnoreTypo(pair.sales, a, b);
+                          }}
                           style={{ backgroundColor:C.input, borderRadius:8, paddingVertical:8, alignItems:'center' }}>
                           <Text style={{ color:C.muted, fontSize:12 }}>Bukan typo — Abaikan</Text>
                         </TouchableOpacity>
@@ -3502,14 +3548,16 @@ export default function App() {
   const [driveSyncing,     setDriveSyncing]     = useState(false);
   const [driveTokenExpired,setDriveTokenExpired]= useState(false);
 
-  // expo-auth-session v6: Google.useAuthRequest di Android WAJIB ada androidClientId
-  // atau clientId sebagai fallback — tanpanya invariantClientId() throw saat render
-  // → app crash sebelum UI muncul. Pakai webClientId sekalian sebagai clientId.
+  // expo-auth-session v6: Google.useAuthRequest di Android WAJIB ada clientId sebagai
+  // fallback — tanpanya invariantClientId() throw saat render → app crash sebelum UI muncul.
+  // redirectUri harus hardcode ke proxy Expo karena makeRedirectUri({useProxy:true}) di v6
+  // menghasilkan custom scheme (com.omsetku.app://) yang ditolak Google Web client (Error 400).
+  const GDRIVE_REDIRECT_URI = 'https://auth.expo.io/@aliangkoko/omsetku';
   const [gRequest, gResponse, gPromptAsync] = Google.useAuthRequest({
-    clientId:    GOOGLE_WEB_CLIENT_ID, // fallback universal → cegah invariantClientId throw
+    clientId:    GOOGLE_WEB_CLIENT_ID,
     webClientId: GOOGLE_WEB_CLIENT_ID,
     scopes: ['https://www.googleapis.com/auth/drive.file', 'email', 'profile'],
-    redirectUri: AuthSession.makeRedirectUri({ useProxy: true }),
+    redirectUri: GDRIVE_REDIRECT_URI,
   });
 
   // Load stored drive state on startup + cek token validity
@@ -3790,6 +3838,11 @@ export default function App() {
     await reloadData();
   }, [reloadData]);
 
+  const handleIgnoreTypo = useCallback(async (sales, normA, normB) => {
+    await addIgnoredTypoPair(dbRef.current, sales, normA, normB);
+    await reloadData();
+  }, [reloadData]);
+
   const handleImportCsv = useCallback(async (rows) => {
     const db = dbRef.current;
     const now = new Date().toISOString();
@@ -3917,7 +3970,7 @@ export default function App() {
         {tab==='dashboard' && <DashboardScreen data={data} onYearChange={handleYearChange} />}
         {tab==='riwayat'   && <HistoryScreen data={data} onDelete={handleDelete} onEdit={handleEdit} onRestore={handleRestore} />}
         {tab==='ranking'   && <RankingScreen data={data} />}
-        {tab==='pelanggan' && <CustomersScreen data={data} onMerge={handleMergeCustomer} />}
+        {tab==='pelanggan' && <CustomersScreen data={data} onMerge={handleMergeCustomer} onIgnoreTypo={handleIgnoreTypo} />}
       </View>
 
       {/* Bottom tabs */}
