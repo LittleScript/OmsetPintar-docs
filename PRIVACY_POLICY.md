@@ -1,78 +1,139 @@
 # Kebijakan Privasi OmsetKu
 
-**Terakhir diperbarui:** 30 Mei 2026
+**Terakhir diperbarui:** 1 Juni 2026
 
 ## 1. Pendahuluan
 
-OmsetKu ("Aplikasi") adalah aplikasi pencatatan omset untuk usaha mikro, kecil, dan menengah (UMKM) yang dikembangkan untuk membantu pemilik toko mencatat transaksi harian secara mudah dan cepat.
+OmsetKu ("Aplikasi") adalah aplikasi pencatatan omset harian untuk usaha mikro, kecil, dan menengah (UMKM) Indonesia yang dikembangkan untuk membantu pemilik toko dan tim sales mencatat transaksi dengan mudah, cepat, dan aman.
 
-Kebijakan Privasi ini menjelaskan bagaimana Aplikasi mengumpulkan, menggunakan, dan melindungi informasi Anda.
-
-## 2. Informasi yang Dikumpulkan
-
-### 2.1 Data yang Anda Masukkan
-OmsetKu mengumpulkan dan menyimpan data berikut yang Anda input secara langsung:
-- Nama bisnis / toko
-- Nama sales / karyawan
-- Data transaksi: nomor bon, tanggal, nama pelanggan, nominal, catatan
-- Pengaturan aplikasi (format bon, format tanggal, tema)
-
-### 2.2 Data yang TIDAK Dikumpulkan
-Aplikasi ini **TIDAK** mengumpulkan:
-- Informasi pribadi identitas Anda (nama, email, nomor HP)
-- Data lokasi / GPS
-- Data kontak dari perangkat
-- Informasi pembayaran
-- Data biometrik
-
-## 3. Penyimpanan Data
-
-Seluruh data disimpan **secara lokal** di perangkat Anda menggunakan database SQLite. Data **tidak dikirimkan ke server** manapun. Tidak ada koneksi internet yang diperlukan untuk menggunakan Aplikasi.
-
-## 4. Akses File / Penyimpanan
-
-Aplikasi meminta izin akses penyimpanan perangkat hanya untuk:
-- **Fitur Import CSV**: Membaca file CSV dari folder penyimpanan Anda untuk import data dari Google Sheets
-- **Fitur Export Backup**: Menyimpan file backup JSON ke penyimpanan perangkat
-
-Aplikasi tidak membaca atau mengakses file lain di luar keperluan tersebut.
-
-## 5. Berbagi Data
-
-Kami **tidak menjual, menyewakan, atau membagikan** data Anda kepada pihak ketiga manapun karena seluruh data hanya ada di perangkat Anda.
-
-Fitur "Export Backup" memungkinkan Anda berbagi file backup secara manual melalui aplikasi yang Anda pilih (WhatsApp, email, Google Drive, dll.). Proses berbagi ini sepenuhnya dikendalikan oleh Anda.
-
-## 6. Keamanan Data
-
-Karena seluruh data tersimpan lokal di perangkat Anda:
-- Keamanan data bergantung pada keamanan perangkat Anda (PIN, sidik jari, dll.)
-- Kami menyarankan Anda melakukan backup data secara berkala menggunakan fitur Export yang tersedia
-- Jika perangkat hilang atau direset, data yang tidak di-backup tidak dapat dipulihkan
-
-## 7. Data Anak-anak
-
-Aplikasi ini ditujukan untuk penggunaan bisnis oleh orang dewasa. Kami tidak secara sengaja mengumpulkan data dari anak-anak di bawah usia 13 tahun.
-
-## 8. Perubahan Kebijakan Privasi
-
-Kami dapat memperbarui Kebijakan Privasi ini dari waktu ke waktu. Perubahan akan diberitahukan melalui pembaruan aplikasi di Google Play Store. Tanggal pembaruan terakhir selalu tercantum di bagian atas dokumen ini.
-
-## 9. Hak Pengguna
-
-Karena data Anda tersimpan lokal di perangkat:
-- Anda dapat **menghapus** seluruh data melalui menu Pengaturan → Reset Semua Data
-- Anda dapat **mengekspor** data melalui menu Pengaturan → Export Backup
-- Menghapus aplikasi dari perangkat akan **menghapus seluruh data** secara permanen
-
-## 10. Kontak
-
-Jika Anda memiliki pertanyaan mengenai Kebijakan Privasi ini, silakan hubungi:
-
-**Email:** aliangkoko@gmail.com
+Kebijakan Privasi ini menjelaskan bagaimana Aplikasi mengumpulkan, menggunakan, menyimpan, dan melindungi informasi Anda.
 
 ---
 
-*Kebijakan Privasi ini berlaku untuk aplikasi OmsetKu versi 3.8.0 dan seterusnya.*
+## 2. Informasi yang Dikumpulkan
 
-**URL Online:** https://littlescript.github.io/OmsetKu-docs/
+### 2.1 Data yang Anda Masukkan Langsung
+OmsetKu menyimpan data berikut yang Anda input secara langsung:
+- Nama bisnis / toko
+- Nama sales / karyawan
+- Data transaksi: nomor bon, tanggal, nama pelanggan, nominal, catatan
+- Pengaturan aplikasi (format bon, format tanggal, tema, jam notifikasi)
+
+### 2.2 Data Google (hanya jika fitur Google Drive diaktifkan)
+Jika Anda memilih untuk menghubungkan akun Google Drive:
+- **Email akun Google** yang Anda pilih disimpan lokal di SecureStore (terenkripsi)
+- **Token OAuth** (access token + refresh token) disimpan lokal di SecureStore (terenkripsi) untuk menjaga koneksi tanpa perlu login ulang
+- File backup diunggah ke folder "OmsetKu Backup" di **Google Drive milik Anda sendiri**
+
+### 2.3 Data yang TIDAK Dikumpulkan
+Aplikasi ini **TIDAK** mengumpulkan:
+- Informasi pribadi identitas Anda (selain email Google jika Drive aktif)
+- Data lokasi / GPS
+- Data kontak dari perangkat
+- Informasi pembayaran / kartu kredit
+- Data biometrik (sidik jari tidak disimpan atau dikirimkan — hanya digunakan untuk verifikasi lokal via sistem Android)
+- Analytics / telemetri penggunaan
+- Log aktivitas pengguna
+
+---
+
+## 3. Penyimpanan Data
+
+| Jenis Data | Lokasi Penyimpanan | Akses |
+|---|---|---|
+| Transaksi & pengaturan | SQLite lokal di HP Anda | Hanya app OmsetKu |
+| Token OAuth Google | SecureStore (terenkripsi) | Hanya app OmsetKu |
+| File backup | Google Drive akun Anda | Anda + siapapun yang Anda izinkan |
+
+Seluruh data bisnis (transaksi, pelanggan, sales) **hanya tersimpan di perangkat Anda**. Tidak ada server OmsetKu yang menerima atau menyimpan data Anda.
+
+---
+
+## 4. Izin Aplikasi yang Diminta
+
+| Izin | Keperluan |
+|---|---|
+| `USE_BIOMETRIC` / `USE_FINGERPRINT` | Kunci aplikasi fingerprint (opsional, tidak menyimpan biometrik) |
+| `RECEIVE_BOOT_COMPLETED` | Restart backup otomatis Drive setelah HP restart (jika Drive aktif) |
+| `INTERNET` | Backup & sinkron Google Drive (opsional, tidak wajib untuk fungsi utama) |
+| `POST_NOTIFICATIONS` | Notifikasi pengingat harian (opsional) |
+| `READ_EXTERNAL_STORAGE` | Import file CSV dari penyimpanan (opsional) |
+| `WRITE_EXTERNAL_STORAGE` | Simpan file export Excel / backup (opsional) |
+
+---
+
+## 5. Penggunaan Data
+
+Data yang Anda masukkan **hanya digunakan** untuk keperluan berikut di dalam aplikasi:
+- Menampilkan dashboard omset, grafik, dan ranking pelanggan
+- Menghasilkan laporan Excel
+- Backup ke Google Drive Anda (jika diaktifkan)
+- Sinkronisasi antar perangkat (jika diaktifkan, menggunakan Drive Anda sendiri)
+
+**Kami tidak pernah:**
+- Menggunakan data Anda untuk iklan
+- Membagikan data ke pihak ketiga
+- Mengakses data Anda tanpa sepengetahuan Anda
+
+---
+
+## 6. Google Drive & Sinkronisasi
+
+Fitur Google Drive bersifat **sepenuhnya opsional**. Jika diaktifkan:
+- Data dibackup ke folder "OmsetKu Backup" di Google Drive **akun Anda sendiri**
+- Sinkronisasi antar 2 HP menggunakan Drive sebagai perantara (bukan server OmsetKu)
+- Koneksi menggunakan protokol OAuth 2.0 standar dengan PKCE (aman tanpa client secret)
+- Token diperbarui otomatis tanpa perlu login ulang berulang
+- Anda dapat mencabut izin aplikasi kapan saja melalui: myaccount.google.com → Keamanan → Aplikasi yang memiliki akses
+
+---
+
+## 7. Keamanan Data
+
+- **Data lokal**: Dilindungi oleh keamanan perangkat Anda (PIN, sidik jari, enkripsi storage Android)
+- **Token OAuth**: Disimpan di SecureStore Android (terenkripsi)
+- **Kunci Aplikasi**: Fitur opsional — fingerprint/PIN HP sebagai lapisan keamanan tambahan
+- **Backup**: Dienkripsi oleh Google Drive sesuai kebijakan Google
+
+Kami menyarankan melakukan backup data secara berkala. Jika perangkat hilang atau direset tanpa backup, data tidak dapat dipulihkan oleh kami karena kami tidak memiliki salinan data Anda.
+
+---
+
+## 8. Data Anak-Anak
+
+Aplikasi ini ditujukan untuk penggunaan bisnis oleh orang dewasa. Kami tidak secara sengaja mengumpulkan data dari anak-anak di bawah usia 13 tahun.
+
+---
+
+## 9. Hak Pengguna
+
+Karena seluruh data tersimpan lokal di perangkat Anda, Anda memiliki kendali penuh:
+- **Hapus semua data**: Settings → Reset Semua Data
+- **Export data**: Settings → Laporan (Excel) atau Export Backup JSON
+- **Putus koneksi Drive**: Settings → Backup Google Drive → Putus Koneksi
+- **Hapus aplikasi**: Menghapus seluruh data lokal secara permanen
+- **Cabut akses Google**: myaccount.google.com → Keamanan → Aplikasi pihak ketiga
+
+---
+
+## 10. Perubahan Kebijakan Privasi
+
+Kebijakan ini dapat diperbarui seiring perkembangan aplikasi. Versi terbaru selalu tersedia di:
+- Dalam aplikasi: Settings → tentang
+- Online: https://littlescript.github.io/OmsetKu-docs/
+
+Perubahan signifikan akan diberitahukan melalui pembaruan aplikasi di Google Play Store.
+
+---
+
+## 11. Kontak
+
+Pertanyaan atau laporan terkait privasi:
+
+**Email:** aliangkoko@gmail.com
+**GitHub:** https://github.com/LittleScript/OmsetKu-docs
+
+---
+
+*Kebijakan Privasi ini berlaku untuk OmsetKu v4.6.0 dan seterusnya.*
+*URL Online: https://littlescript.github.io/OmsetKu-docs/*
