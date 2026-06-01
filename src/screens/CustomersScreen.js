@@ -3,6 +3,9 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Alert, Platfo
 import { ThemeContext, getStyles } from '../theme';
 import { COLORS } from '../constants';
 import { toIdr, toShort, fmtDate, getNorm, findSimilarNames } from '../utils';
+import { PurchasesContext } from '../../App';
+import { can, FREE } from '../premium';
+import { LockRow } from '../components/LockRow';
 
 function getCustomerList(transactions, salesFilter) {
   const map = {};
@@ -30,6 +33,10 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
   const { salesList, transactions, dateFormat } = data;
+  const { purchases, openPaywall } = useContext(PurchasesContext);
+  const hasCustomerFull   = can.customerFull(purchases);
+  const hasCustomerDetail = can.customerDetail(purchases);
+  const MAX_CUSTOMERS     = hasCustomerFull ? Infinity : FREE.MAX_CUSTOMERS;
   const [salesF, setSalesF]       = useState('ALL');
   const [search, setSearch]       = useState('');
   const [sortBy, setSortBy]       = useState('nama');
@@ -164,10 +171,17 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
           </View>
         ) : (
           <FlatList
-            data={filtered}
+            data={filtered.slice(0, MAX_CUSTOMERS)}
             keyExtractor={c => `${c.sales}|${c.name}`}
             contentContainerStyle={{ paddingHorizontal:14, paddingBottom:110 }}
             renderItem={({ item: c }) => renderCustomerItem({ item: c })}
+            ListFooterComponent={
+              <LockRow
+                hiddenCount={filtered.length > MAX_CUSTOMERS ? filtered.length - MAX_CUSTOMERS : 0}
+                label="pelanggan"
+                onUnlock={() => openPaywall('customer_full')}
+              />
+            }
           />
         )
       ) : grouped.length === 0 ? (
@@ -317,13 +331,15 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
           dateFormat={dateFormat}
           salesList={salesList}
           onClose={() => setSelectedCustomer(null)}
+          hasDetail={hasCustomerDetail}
+          onUnlockDetail={() => { setSelectedCustomer(null); openPaywall('customer_detail'); }}
         />
       )}
     </View>
   );
 }
 
-function CustomerDetailModal({ customer, transactions, dateFormat, salesList, onClose }) {
+function CustomerDetailModal({ customer, transactions, dateFormat, salesList, onClose, hasDetail, onUnlockDetail }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
   const salesColor = COLORS[salesList.indexOf(customer.sales) % COLORS.length] || C.primary;
@@ -382,32 +398,51 @@ function CustomerDetailModal({ customer, transactions, dateFormat, salesList, on
           ))}
         </View>
 
-        {/* Transaction list */}
-        <FlatList
-          data={custTxns}
-          keyExtractor={t => String(t.id)}
-          contentContainerStyle={{ padding:14, paddingBottom:40 }}
-          ListEmptyComponent={
-            <Text style={{ color:C.muted, textAlign:'center', marginTop:40 }}>
-              Belum ada transaksi
+        {/* Transaction list — locked jika belum beli ANALYTICS CUSTOMERS */}
+        {hasDetail ? (
+          <FlatList
+            data={custTxns}
+            keyExtractor={t => String(t.id)}
+            contentContainerStyle={{ padding:14, paddingBottom:40 }}
+            ListEmptyComponent={
+              <Text style={{ color:C.muted, textAlign:'center', marginTop:40 }}>
+                Belum ada transaksi
+              </Text>
+            }
+            renderItem={({ item: t }) => (
+              <View style={[st.card, { marginBottom:8, borderLeftWidth:3, borderLeftColor:salesColor }]}>
+                <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:4 }}>
+                  <Text style={[st.mono, { color:C.muted, fontSize:11 }]}>#{t.bonNumber}</Text>
+                  {t.editedAt && <Text style={{ color:C.warning, fontSize:10 }}>✎ edited</Text>}
+                </View>
+                <View style={{ flexDirection:'row', justifyContent:'space-between' }}>
+                  <Text style={{ color:C.muted, fontSize:12 }}>{fmtDate(t.date, dateFormat)}</Text>
+                  <Text style={[st.mono, { color:C.accent, fontSize:15, fontWeight:'800' }]}>
+                    {toIdr(t.amount)}
+                  </Text>
+                </View>
+                {t.notes ? <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{t.notes}</Text> : null}
+              </View>
+            )}
+          />
+        ) : (
+          /* Summary only untuk free tier */
+          <TouchableOpacity
+            onPress={onUnlockDetail}
+            style={{ margin:14, borderRadius:14, borderWidth:1.5, borderColor:C.border,
+              borderStyle:'dashed', padding:20, alignItems:'center', gap:8 }}>
+            <Text style={{ fontSize:28 }}>🔒</Text>
+            <Text style={{ color:C.text, fontSize:14, fontWeight:'700', textAlign:'center' }}>
+              Riwayat Transaksi Terkunci
             </Text>
-          }
-          renderItem={({ item: t }) => (
-            <View style={[st.card, { marginBottom:8, borderLeftWidth:3, borderLeftColor:salesColor }]}>
-              <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:4 }}>
-                <Text style={[st.mono, { color:C.muted, fontSize:11 }]}>#{t.bonNumber}</Text>
-                {t.editedAt && <Text style={{ color:C.warning, fontSize:10 }}>✎ edited</Text>}
-              </View>
-              <View style={{ flexDirection:'row', justifyContent:'space-between' }}>
-                <Text style={{ color:C.muted, fontSize:12 }}>{fmtDate(t.date, dateFormat)}</Text>
-                <Text style={[st.mono, { color:C.accent, fontSize:15, fontWeight:'800' }]}>
-                  {toIdr(t.amount)}
-                </Text>
-              </View>
-              {t.notes ? <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{t.notes}</Text> : null}
+            <Text style={{ color:C.muted, fontSize:12, textAlign:'center' }}>
+              Lihat {custTxns.length} transaksi lengkap dengan{'\n'}Analitik Pelanggan
+            </Text>
+            <View style={{ backgroundColor:C.primary, borderRadius:10, paddingHorizontal:18, paddingVertical:9, marginTop:4 }}>
+              <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>Unlock Sekarang →</Text>
             </View>
-          )}
-        />
+          </TouchableOpacity>
+        )}
       </View>
     </Modal>
   );

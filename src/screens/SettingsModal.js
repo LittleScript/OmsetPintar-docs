@@ -12,12 +12,18 @@ import { ThemeContext, getStyles, btnStyle } from '../theme';
 import { COLORS, MONTHS_F, APP_VER, SCHEMA_VER, GDRIVE_TOKEN_KEY, GDRIVE_HOUR_KEY, GDRIVE_TASK_NAME } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getNorm, parseCsvText, padNum } from '../utils';
 import { isGdriveTokenValid, scheduleReminder, cancelReminder } from '../services';
+import { PurchasesContext } from '../../App';
+import { can } from '../premium';
 
 function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   driveEmail, driveLastSync, driveSyncing, driveTokenExpired,
   onDriveConnect, onDriveBackup, onDriveDisconnect, onDriveSync }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
+  const { purchases, openPaywall } = useContext(PurchasesContext);
+  const hasExcel    = can.excelExport(purchases);
+  const hasBackup   = can.backupDrive(purchases);
+  const hasShare    = can.shareKartu(purchases);
 
   const { salesList, bonConfig, dateFormat, companyName } = data;
   const [themeMode, setThemeMode]       = useState(data.themeMode||'dark');
@@ -672,12 +678,25 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             ))}
           </View>
 
-          {/* Google Drive Backup */}
+          {/* Google Drive Backup — locked jika belum beli BACKUP SYNC */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
               BACKUP GOOGLE DRIVE
             </Text>
-            {driveEmail ? (
+            {!hasBackup ? (
+              <TouchableOpacity onPress={() => openPaywall('backup_drive')}
+                style={{ backgroundColor:C.input, borderRadius:14, borderWidth:1.5, borderColor:C.border,
+                  borderStyle:'dashed', padding:16, alignItems:'center', gap:8 }}>
+                <Text style={{ fontSize:28 }}>🔒</Text>
+                <Text style={{ color:C.text, fontSize:14, fontWeight:'800' }}>Backup & Sinkron Terkunci</Text>
+                <Text style={{ color:C.muted, fontSize:12, textAlign:'center' }}>
+                  Google Drive · Sinkron 2 HP · Widget
+                </Text>
+                <View style={{ backgroundColor:C.primary, borderRadius:10, paddingHorizontal:18, paddingVertical:9, marginTop:4 }}>
+                  <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>Unlock Rp 49.000 →</Text>
+                </View>
+              </TouchableOpacity>
+            ) : driveEmail ? (
               <>
                 {/* Warning token expired */}
                 {driveTokenExpired && (
@@ -793,11 +812,14 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             <Text style={{ color:C.muted, fontSize:11, marginBottom:12 }}>
               Generate laporan Excel profesional siap cetak
             </Text>
-            <TouchableOpacity onPress={() => setShowExcelMenu(true)}
-              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:16, alignItems:'center' }}>
-              <Text style={{ color:C.success, fontSize:15, fontWeight:'800' }}>📊  Export ke Excel (.xlsx)</Text>
-              <Text style={{ color:C.success, fontSize:10, marginTop:3, opacity:0.8 }}>
-                Ringkasan · Per Sales · Bulanan · Pelanggan · Ranking
+            <TouchableOpacity onPress={() => hasExcel ? setShowExcelMenu(true) : openPaywall('excel_export')}
+              style={{ backgroundColor: hasExcel ? C.success+'18' : C.input,
+                borderWidth:1.5, borderColor: hasExcel ? C.success : C.border,
+                borderRadius:14, paddingVertical:16, alignItems:'center' }}>
+              <Text style={{ color: hasExcel ? C.success : C.muted, fontSize:15, fontWeight:'800' }}>
+                {hasExcel ? '📊' : '🔒'}  Export ke Excel (.xlsx)</Text>
+              <Text style={{ color: hasExcel ? C.success : C.muted, fontSize:10, marginTop:3, opacity:0.8 }}>
+                {hasExcel ? 'Ringkasan · Per Sales · Bulanan · Pelanggan · Ranking' : 'Laporan & Ekspor — Rp 49.000'}
               </Text>
             </TouchableOpacity>
           </View>

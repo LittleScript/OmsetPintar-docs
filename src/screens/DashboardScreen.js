@@ -5,6 +5,9 @@ import * as Sharing from 'expo-sharing';
 import { ThemeContext, getStyles, SalesChip, btnStyle, KpiCard } from '../theme';
 import { COLORS, MONTHS, MONTHS_F } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getWeekBounds } from '../utils';
+import { PurchasesContext } from '../../App';
+import { can, FREE } from '../premium';
+import { PaywallOverlay } from '../components/PaywallOverlay';
 
 let captureRef = null;
 try { captureRef = require('react-native-view-shot').captureRef; } catch(_) {}
@@ -24,6 +27,10 @@ function PctTag({ pct, C }) {
 function DashboardScreen({ data, onYearChange }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
+  const { purchases, openPaywall } = useContext(PurchasesContext);
+  const hasDashPct   = can.dashboardPct(purchases);
+  const hasHariTsb   = can.hariTersibuk(purchases);
+  const hasChartFull = can.chartFull(purchases);
 
   const { salesList, transactions, activeYear, dateFormat } = data;
   const [busyMonthFilter,  setBusyMonthFilter]  = useState(0);
@@ -80,6 +87,13 @@ function DashboardScreen({ data, onYearChange }) {
     const sTx = yearTxns.filter(t => t.sales===s);
     return { name:s, total:sTx.reduce((a,t)=>a+t.amount,0), count:sTx.length, color:COLORS[i%COLORS.length] };
   });
+
+  // Free: hanya tampilkan FREE.CHART_MONTHS_VISIBLE bulan terakhir
+  const currentMonth   = new Date().getMonth(); // 0-indexed
+  const visibleMonths  = hasChartFull
+    ? new Set([0,1,2,3,4,5,6,7,8,9,10,11])
+    : new Set(Array.from({ length: FREE.CHART_MONTHS_VISIBLE }, (_, k) =>
+        (currentMonth - k + 12) % 12));
 
   const monthly = MONTHS.map((m,i) => {
     const mo = String(i+1).padStart(2,'0');
@@ -205,7 +219,12 @@ function DashboardScreen({ data, onYearChange }) {
               {toIdr(todayTotal)}
             </Text>
             <Text style={{ color:C.muted, fontSize:12 }}>{todayTxns.length} bon</Text>
-            <PctTag pct={dayPct} C={C} />
+            {hasDashPct
+              ? <PctTag pct={dayPct} C={C} />
+              : <TouchableOpacity onPress={() => openPaywall('dashboard_pct')}>
+                  <Text style={{ color:C.primary, fontSize:10, fontWeight:'700', marginTop:1 }}>🔒 ↑↓ %</Text>
+                </TouchableOpacity>
+            }
             {dayPct !== null && (
               <Text style={{ color:C.muted, fontSize:9 }}>vs kemarin</Text>
             )}
@@ -216,7 +235,12 @@ function DashboardScreen({ data, onYearChange }) {
               {toShort(weekTotal)}
             </Text>
             <Text style={{ color:C.muted, fontSize:12 }}>{weekTxns.length} bon</Text>
-            <PctTag pct={weekPct} C={C} />
+            {hasDashPct
+              ? <PctTag pct={weekPct} C={C} />
+              : <TouchableOpacity onPress={() => openPaywall('dashboard_pct')}>
+                  <Text style={{ color:C.primary, fontSize:10, fontWeight:'700', marginTop:1 }}>🔒 ↑↓ %</Text>
+                </TouchableOpacity>
+            }
             {weekPct !== null && (
               <Text style={{ color:C.muted, fontSize:9 }}>vs minggu lalu</Text>
             )}
@@ -283,23 +307,36 @@ function DashboardScreen({ data, onYearChange }) {
           )}
           <View style={{ flexDirection:'row', alignItems:'flex-end', height:80, gap:2 }}>
             {monthly.map((m, i) => {
-              const maxH = monthly.reduce((mx, x) => Math.max(mx, x.total), 0);
+              const maxH    = monthly.reduce((mx, x) => Math.max(mx, x.total), 0);
+              const visible = visibleMonths.has(i); // free: hanya 2 bulan terakhir
               return (
                 <View key={i} style={{ flex:1, alignItems:'center', justifyContent:'flex-end', height:80 }}>
-                  {/* Bar kiri-kanan per sales */}
-                  <View style={{ flexDirection:'row', alignItems:'flex-end', width:'100%', gap:1 }}>
-                    {salesList.length > 0 ? salesList.map((s, si) => {
-                      const sTotal = m[s] || 0;
-                      const barH   = maxH > 0 ? Math.max((sTotal / maxH) * 72, sTotal > 0 ? 3 : 0) : 0;
-                      return (
-                        <View key={s} style={{ flex:1, height:barH, backgroundColor:COLORS[si%COLORS.length], borderRadius:2 }} />
-                      );
-                    }) : (
-                      <View style={{ flex:1, height:maxH>0?Math.max((m.total/maxH)*72,m.total>0?3:0):0,
-                        backgroundColor:C.primary, borderRadius:2 }} />
-                    )}
-                  </View>
-                  <Text style={{ color:C.muted, fontSize:7, marginTop:3 }}>{m.name}</Text>
+                  {visible ? (
+                    <>
+                      <View style={{ flexDirection:'row', alignItems:'flex-end', width:'100%', gap:1 }}>
+                        {salesList.length > 0 ? salesList.map((s, si) => {
+                          const sTotal = m[s] || 0;
+                          const barH   = maxH > 0 ? Math.max((sTotal / maxH) * 72, sTotal > 0 ? 3 : 0) : 0;
+                          return (
+                            <View key={s} style={{ flex:1, height:barH, backgroundColor:COLORS[si%COLORS.length], borderRadius:2 }} />
+                          );
+                        }) : (
+                          <View style={{ flex:1, height:maxH>0?Math.max((m.total/maxH)*72,m.total>0?3:0):0,
+                            backgroundColor:C.primary, borderRadius:2 }} />
+                        )}
+                      </View>
+                      <Text style={{ color:C.muted, fontSize:7, marginTop:3 }}>{m.name}</Text>
+                    </>
+                  ) : (
+                    // Bulan terkunci — bar abu + gembok kecil
+                    <TouchableOpacity
+                      onPress={() => openPaywall('chart_full')}
+                      style={{ flex:1, width:'100%', alignItems:'center', justifyContent:'flex-end' }}>
+                      <View style={{ flex:1, width:'60%', backgroundColor:C.input, borderRadius:2, opacity:0.4 }} />
+                      <Text style={{ fontSize:8, marginTop:2 }}>🔒</Text>
+                      <Text style={{ color:C.muted, fontSize:7, marginTop:1 }}>{m.name}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               );
             })}
@@ -334,47 +371,54 @@ function DashboardScreen({ data, onYearChange }) {
         </View>
       )}
 
-      {/* Hari Tersibuk */}
+      {/* Hari Tersibuk — FREE: blur overlay */}
       {yearTotal > 0 && (
         <View style={st.card}>
           <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:8 }}>
             HARI TERSIBUK — {busyMonthFilter === 0 ? `ALL ${activeYear}` : `${MONTHS_F[busyMonthFilter-1]} ${activeYear}`}
           </Text>
-          {/* Filter bulan: All + Jan–Des */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
-            {[0,1,2,3,4,5,6,7,8,9,10,11,12].map(m => {
-              const active = busyMonthFilter === m;
+          <PaywallOverlay
+            locked={!hasHariTsb}
+            featureKey="hari_tersibuk"
+            subtitle="Lihat hari paling ramai toko Anda sepanjang tahun"
+            onUnlock={() => openPaywall('hari_tersibuk')}
+            minHeight={200}>
+            {/* Filter bulan */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
+              {[0,1,2,3,4,5,6,7,8,9,10,11,12].map(m => {
+                const active = busyMonthFilter === m;
+                return (
+                  <TouchableOpacity key={m} onPress={() => setBusyMonthFilter(m)}
+                    style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:8, marginRight:6,
+                      backgroundColor: active ? C.accent : C.input }}>
+                    <Text style={{ color: active ? '#fff' : C.muted, fontSize:11, fontWeight:'700' }}>
+                      {m === 0 ? 'All' : MONTHS[m-1]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            {busyBaseTxns.length === 0 ? (
+              <Text style={{ color:C.muted, fontSize:12, textAlign:'center', paddingVertical:8 }}>Belum ada data</Text>
+            ) : busyDays.map((d, i) => {
+              const pct = busyMax > 0 ? d.total / busyMax : 0;
+              const isBusiest = d.total === busyMax && busyMax > 0;
               return (
-                <TouchableOpacity key={m} onPress={() => setBusyMonthFilter(m)}
-                  style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:8, marginRight:6,
-                    backgroundColor: active ? C.accent : C.input }}>
-                  <Text style={{ color: active ? '#fff' : C.muted, fontSize:11, fontWeight:'700' }}>
-                    {m === 0 ? 'All' : MONTHS[m-1]}
+                <View key={d.label} style={{ flexDirection:'row', alignItems:'center', marginBottom:8, gap:8 }}>
+                  <Text style={{ color: isBusiest ? C.accent : C.muted, fontSize:12, fontWeight: isBusiest ? '800' : '600', width:28 }}>
+                    {d.label}
                   </Text>
-                </TouchableOpacity>
+                  <View style={{ flex:1, backgroundColor:C.input, borderRadius:4, height:10, overflow:'hidden' }}>
+                    <View style={{ width:`${pct*100}%`, height:'100%', backgroundColor: isBusiest ? C.accent : C.primary, borderRadius:4 }} />
+                  </View>
+                  <Text style={[st.mono, { color: isBusiest ? C.accent : C.muted, fontSize:11, width:52, textAlign:'right' }]}>
+                    {d.total > 0 ? toShort(d.total) : '-'}
+                  </Text>
+                  {isBusiest && <Text style={{ fontSize:10 }}>🔥</Text>}
+                </View>
               );
             })}
-          </ScrollView>
-          {busyBaseTxns.length === 0 ? (
-            <Text style={{ color:C.muted, fontSize:12, textAlign:'center', paddingVertical:8 }}>Belum ada data</Text>
-          ) : busyDays.map((d, i) => {
-            const pct = busyMax > 0 ? d.total / busyMax : 0;
-            const isBusiest = d.total === busyMax && busyMax > 0;
-            return (
-              <View key={d.label} style={{ flexDirection:'row', alignItems:'center', marginBottom:8, gap:8 }}>
-                <Text style={{ color: isBusiest ? C.accent : C.muted, fontSize:12, fontWeight: isBusiest ? '800' : '600', width:28 }}>
-                  {d.label}
-                </Text>
-                <View style={{ flex:1, backgroundColor:C.input, borderRadius:4, height:10, overflow:'hidden' }}>
-                  <View style={{ width:`${pct*100}%`, height:'100%', backgroundColor: isBusiest ? C.accent : C.primary, borderRadius:4 }} />
-                </View>
-                <Text style={[st.mono, { color: isBusiest ? C.accent : C.muted, fontSize:11, width:52, textAlign:'right' }]}>
-                  {d.total > 0 ? toShort(d.total) : '-'}
-                </Text>
-                {isBusiest && <Text style={{ fontSize:10 }}>🔥</Text>}
-              </View>
-            );
-          })}
+          </PaywallOverlay>
         </View>
       )}
     </ScrollView>

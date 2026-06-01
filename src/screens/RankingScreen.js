@@ -3,10 +3,16 @@ import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { ThemeContext, getStyles, SalesChip } from '../theme';
 import { COLORS, MONTHS_F } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getWeekBounds, filterByPeriod, getRanking } from '../utils';
+import { PurchasesContext } from '../../App';
+import { can, FREE } from '../premium';
+import { LockRow } from '../components/LockRow';
 
 function RankingScreen({ data }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
+  const { purchases, openPaywall } = useContext(PurchasesContext);
+  const hasRankingFull = can.rankingFull(purchases);
+  const MAX_RANK = hasRankingFull ? Infinity : FREE.MAX_RANKING;
 
   const { salesList, transactions, dateFormat } = data;
   const [activeSales, setActiveSales] = useState(salesList[0]||'');
@@ -136,7 +142,7 @@ function RankingScreen({ data }) {
           )}
 
           {/* Full list */}
-          {ranked.map((r, i) => (
+          {ranked.slice(0, MAX_RANK).map((r, i) => (
             <View key={r.name+i} style={[st.card, { flexDirection:'row', gap:12, alignItems:'center', borderWidth:1, borderColor:i<3?salesColor+'44':C.border }]}>
               <View style={{ width:34, height:34, borderRadius:10, alignItems:'center', justifyContent:'center',
                 backgroundColor: i===0?C.accent : i===1?'#475569' : i===2?'#92400e' : C.input }}>
@@ -155,6 +161,12 @@ function RankingScreen({ data }) {
               </Text>
             </View>
           ))}
+          {/* Lock row jika ada lebih dari MAX_RANK */}
+          <LockRow
+            hiddenCount={ranked.length > MAX_RANK ? ranked.length - MAX_RANK : 0}
+            label="pelanggan"
+            onUnlock={() => openPaywall('ranking_full')}
+          />
         </>
       )}
     </ScrollView>

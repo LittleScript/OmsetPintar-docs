@@ -38,6 +38,14 @@ import {
   scheduleReminder, cancelReminder,
 } from './src/services';
 
+// ── premium ──────────────────────────────────────────────────────────────────
+import {
+  loadPurchases, savePurchases, can, getMaxSales, FREE,
+} from './src/premium';
+import { PaywallSheet } from './src/components/PaywallSheet';
+
+export const PurchasesContext = createContext({ purchases: {}, openPaywall: () => {} });
+
 // ── widget ───────────────────────────────────────────────────────────────────
 import { registerWidgetTaskHandler } from 'react-native-android-widget';
 import { widgetTaskHandler }         from './src/widget/widgetTaskHandler';
@@ -74,7 +82,9 @@ export default function App() {
   const [dbReady,       setDbReady]       = useState(false);
   const [tab,           setTab]           = useState('input');
   const [showSett,      setShowSett]      = useState(false);
-  const [refreshSignal, setRefreshSignal] = useState(0); // naik setiap write → trigger HistoryScreen reload
+  const [refreshSignal,  setRefreshSignal]  = useState(0);
+  const [purchases,      setPurchases]      = useState({});
+  const [paywallKey,     setPaywallKey]     = useState(null); // key fitur yang di-tap
   const inputDirtyRef = useRef(false);
   const [saveState,setSaveState]= useState('idle');
   const systemScheme = useColorScheme();
@@ -113,6 +123,20 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Load purchases on startup
+  useEffect(() => { loadPurchases().then(setPurchases); }, []);
+
+  const openPaywall   = useCallback((featureKey) => setPaywallKey(featureKey), []);
+  const handlePurchase = useCallback(async (productId) => {
+    // TODO: integrate RevenueCat here
+    // Mock: simpan ke SecureStore
+    const updated = { ...purchases, [productId]: { purchasedAt: Date.now() } };
+    await savePurchases(updated);
+    setPurchases(updated);
+    setPaywallKey(null);
+    Alert.alert('✅ Berhasil', 'Fitur berhasil diaktifkan!');
+  }, [purchases]);
 
   const reloadData = useCallback(async () => {
     if (!dbRef.current) return;
@@ -731,6 +755,7 @@ export default function App() {
     : saveState==='error' ? C.danger : C.muted;
 
   return (
+    <PurchasesContext.Provider value={{ purchases, openPaywall }}>
     <ThemeContext.Provider value={currentTheme}>
     <View style={[{flex:1, backgroundColor:currentTheme.bg}, { paddingTop:Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
@@ -801,5 +826,12 @@ export default function App() {
       )}
     </View>
     </ThemeContext.Provider>
+    <PaywallSheet
+      featureKey={paywallKey}
+      visible={!!paywallKey}
+      onClose={() => setPaywallKey(null)}
+      onBuy={handlePurchase}
+    />
+    </PurchasesContext.Provider>
   );
 }
