@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Alert, Platfo
 import { ThemeContext, getStyles } from '../theme';
 import { COLORS } from '../constants';
 import { toIdr, toShort, fmtDate, getNorm, findSimilarNames } from '../utils';
-import { PurchasesContext } from '../../App';
+import { PurchasesContext } from '../contexts';
 import { can, FREE } from '../premium';
 import { LockRow } from '../components/LockRow';
 
@@ -77,18 +77,22 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
     return allCustomers.filter(c => c.name.toLowerCase().includes(q));
   }, [allCustomers, search]);
 
-  // Group A-Z hanya saat sort by nama
+  // Truncated — free tier max 50 pelanggan per tampilan
+  const displayedFiltered   = MAX_CUSTOMERS === Infinity ? filtered : filtered.slice(0, MAX_CUSTOMERS);
+  const hiddenCustomerCount = Math.max(0, filtered.length - (MAX_CUSTOMERS === Infinity ? filtered.length : MAX_CUSTOMERS));
+
+  // Group A-Z dari displayedFiltered (sudah ter-truncate)
   const grouped = useMemo(() => {
-    if (sortBy !== 'nama') return null; // flat list untuk sort lain
+    if (sortBy !== 'nama') return null;
     const sections = {};
-    filtered.forEach(c => {
+    displayedFiltered.forEach(c => {
       const letter = (c.name[0] || '#').toUpperCase();
       const key = /[A-Z]/.test(letter) ? letter : '#';
       if (!sections[key]) sections[key] = [];
       sections[key].push(c);
     });
     return Object.entries(sections).sort(([a],[b]) => a.localeCompare(b));
-  }, [filtered, sortBy]);
+  }, [displayedFiltered, sortBy]);
 
   const renderCustomerItem = ({ item: c }) => {
     const salesColor = COLORS[salesList.indexOf(c.sales) % COLORS.length] || C.primary;
@@ -171,16 +175,13 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
           </View>
         ) : (
           <FlatList
-            data={filtered.slice(0, MAX_CUSTOMERS)}
+            data={displayedFiltered}
             keyExtractor={c => `${c.sales}|${c.name}`}
             contentContainerStyle={{ paddingHorizontal:14, paddingBottom:110 }}
             renderItem={({ item: c }) => renderCustomerItem({ item: c })}
             ListFooterComponent={
-              <LockRow
-                hiddenCount={filtered.length > MAX_CUSTOMERS ? filtered.length - MAX_CUSTOMERS : 0}
-                label="pelanggan"
-                onUnlock={() => openPaywall('customer_full')}
-              />
+              <LockRow hiddenCount={hiddenCustomerCount} label="pelanggan"
+                onUnlock={() => openPaywall('customer_full')} />
             }
           />
         )
@@ -203,6 +204,10 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
               {customers.map(c => renderCustomerItem({ item: c }))}
             </View>
           )}
+          ListFooterComponent={
+            <LockRow hiddenCount={hiddenCustomerCount} label="pelanggan"
+              onUnlock={() => openPaywall('customer_full')} />
+          }
         />
       )}
 

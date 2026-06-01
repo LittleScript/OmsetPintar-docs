@@ -3,7 +3,7 @@
  * Entry point: imports dari src/, render App component
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useContext } from 'react';
 import { View, Text, TouchableOpacity, Alert, Platform, Modal, ActivityIndicator, StatusBar, useColorScheme, Image, BackHandler, ToastAndroid, AppState } from 'react-native';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as SecureStore      from 'expo-secure-store';
@@ -42,9 +42,8 @@ import {
 import {
   loadPurchases, savePurchases, can, getMaxSales, FREE,
 } from './src/premium';
-import { PaywallSheet } from './src/components/PaywallSheet';
-
-export const PurchasesContext = createContext({ purchases: {}, openPaywall: () => {} });
+import { PaywallSheet }      from './src/components/PaywallSheet';
+import { PurchasesContext }  from './src/contexts'; // shared context, no circular import
 
 // ── widget ───────────────────────────────────────────────────────────────────
 import { registerWidgetTaskHandler } from 'react-native-android-widget';

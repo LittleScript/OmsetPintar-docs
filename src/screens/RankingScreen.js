@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { ThemeContext, getStyles, SalesChip } from '../theme';
 import { COLORS, MONTHS_F } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getWeekBounds, filterByPeriod, getRanking } from '../utils';
-import { PurchasesContext } from '../../App';
+import { PurchasesContext } from '../contexts';
 import { can, FREE } from '../premium';
 import { LockRow } from '../components/LockRow';
 

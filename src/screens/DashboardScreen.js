@@ -5,7 +5,7 @@ import * as Sharing from 'expo-sharing';
 import { ThemeContext, getStyles, SalesChip, btnStyle, KpiCard } from '../theme';
 import { COLORS, MONTHS, MONTHS_F } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getWeekBounds } from '../utils';
-import { PurchasesContext } from '../../App';
+import { PurchasesContext } from '../contexts';
 import { can, FREE } from '../premium';
 import { PaywallOverlay } from '../components/PaywallOverlay';
 
@@ -31,6 +31,7 @@ function DashboardScreen({ data, onYearChange }) {
   const hasDashPct   = can.dashboardPct(purchases);
   const hasHariTsb   = can.hariTersibuk(purchases);
   const hasChartFull = can.chartFull(purchases);
+  const hasShareKartu = can.shareKartu(purchases);
 
   const { salesList, transactions, activeYear, dateFormat } = data;
   const [busyMonthFilter,  setBusyMonthFilter]  = useState(0);
@@ -146,8 +147,8 @@ function DashboardScreen({ data, onYearChange }) {
   }, [shareType, shareDay, shareWeekBounds, shareMonthY, shareMonthM, shareYearVal, transactions, dateFormat]);
 
   const handleShareExecute = async () => {
-    // Coba share sebagai gambar (membutuhkan react-native-view-shot build)
-    if (captureRef && rekapCardRef.current) {
+    // Share sebagai gambar — premium (Laporan & Ekspor)
+    if (hasShareKartu && captureRef && rekapCardRef.current) {
       try {
         const uri = await captureRef(rekapCardRef, { format:'png', quality:1 });
         await Sharing.shareAsync(uri, {
@@ -155,6 +156,11 @@ function DashboardScreen({ data, onYearChange }) {
         });
         return;
       } catch(_) {} // fallback ke teks jika gagal
+    }
+    // Jika belum premium: buka paywall untuk share kartu
+    if (!hasShareKartu && captureRef) {
+      openPaywall('share_kartu');
+      return;
     }
     // Fallback: share sebagai teks
     const { txns, total, header, sub } = sharePreview;
@@ -225,7 +231,7 @@ function DashboardScreen({ data, onYearChange }) {
                   <Text style={{ color:C.primary, fontSize:10, fontWeight:'700', marginTop:1 }}>🔒 ↑↓ %</Text>
                 </TouchableOpacity>
             }
-            {dayPct !== null && (
+            {hasDashPct && dayPct !== null && (
               <Text style={{ color:C.muted, fontSize:9 }}>vs kemarin</Text>
             )}
           </View>
@@ -241,7 +247,7 @@ function DashboardScreen({ data, onYearChange }) {
                   <Text style={{ color:C.primary, fontSize:10, fontWeight:'700', marginTop:1 }}>🔒 ↑↓ %</Text>
                 </TouchableOpacity>
             }
-            {weekPct !== null && (
+            {hasDashPct && weekPct !== null && (
               <Text style={{ color:C.muted, fontSize:9 }}>vs minggu lalu</Text>
             )}
           </View>
@@ -613,14 +619,14 @@ function DashboardScreen({ data, onYearChange }) {
                 </Text>
               </View>
 
-              {/* Tombol share */}
+              {/* Tombol share — gambar = premium, teks = gratis */}
               <TouchableOpacity onPress={handleShareExecute}
                 disabled={sharePreview.txns.length === 0}
                 style={[btnStyle(sharePreview.txns.length > 0 ? C.primary : C.input),
                   sharePreview.txns.length === 0 && { opacity:0.4 }]}>
                 <Text style={{ color: sharePreview.txns.length > 0 ? '#fff' : C.muted,
                   fontSize:16, fontWeight:'800' }}>
-                  📤  Bagikan sebagai Gambar
+                  {hasShareKartu ? '📤  Bagikan sebagai Gambar' : '📤  Bagikan (Teks)  🔒 Gambar'}
                 </Text>
               </TouchableOpacity>
             </ScrollView>
