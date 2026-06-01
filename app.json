@@ -17,7 +17,7 @@
       "versionCode": 22,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#071018"
+        "backgroundColor": "#FFFFFF"
       }
     },
     "plugins": [
