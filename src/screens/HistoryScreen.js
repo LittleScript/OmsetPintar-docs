@@ -1,43 +1,65 @@
-import React, { useState, useEffect, useMemo, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Alert, Platform, ScrollView, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
 import { ThemeContext, getStyles, SalesChip, chipStyle, btnStyle } from '../theme';
 import { COLORS } from '../constants';
 import { toIdr, fmtDate, genBon } from '../utils';
+import { getDb, loadTransactionsPaged, countTransactionsPaged } from '../db';
 
-function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
+// refreshSignal naik setiap kali App.js memanggil reloadData — trigger reload History
+function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
 
-  const { salesList, transactions, dateFormat } = data;
+  const { salesList, dateFormat } = data;
   const [search, setSearch]   = useState('');
   const [salesF, setSalesF]   = useState('ALL');
   const [editTx, setEditTx]   = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editLogTx, setEditLogTx] = useState(null);
   const [showEditDatePicker, setShowEditDatePicker] = useState(false);
-  const [histPage, setHistPage] = useState(1);
-  const HIST_PAGE_SIZE = 30;
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return [...transactions]
-      .sort((a,b) => b.id - a.id)
-      .filter(t => salesF==='ALL' || t.sales===salesF)
-      .filter(t =>
-        !q ||
-        t.customerName.toLowerCase().includes(q) ||
-        (t.bonNumber||'').toLowerCase().includes(q)
-      );
-  }, [transactions, salesF, search]);
+  // ── DB Pagination state ───────────────────────────────────────────────────
+  const PAGE_SIZE = 30;
+  const [dbItems,   setDbItems]   = useState([]);
+  const [dbTotal,   setDbTotal]   = useState(0);
+  const [dbPage,    setDbPage]    = useState(1);
+  const [dbLoading, setDbLoading] = useState(false);
+  const loadingRef = useRef(false);
 
-  // Reset page saat filter/search berubah
-  useEffect(() => { setHistPage(1); }, [search, salesF]);
+  const loadPage = useCallback(async (page, reset = false) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setDbLoading(true);
+    try {
+      const db   = await getDb();
+      const rows = await loadTransactionsPaged(db, { page, pageSize: PAGE_SIZE, salesFilter: salesF, search });
+      if (reset) {
+        setDbItems(rows);
+        const cnt = await countTransactionsPaged(db, { salesFilter: salesF, search });
+        setDbTotal(cnt);
+        setDbPage(1);
+      } else {
+        setDbItems(prev => [...prev, ...rows]);
+        setDbPage(page);
+      }
+    } finally {
+      setDbLoading(false);
+      loadingRef.current = false;
+    }
+  }, [salesF, search]);
 
-  const displayedHistory = useMemo(
-    () => filtered.slice(0, histPage * HIST_PAGE_SIZE),
-    [filtered, histPage]
-  );
+  // Reload dari halaman 1 saat filter/search berubah ATAU data berubah (refreshSignal)
+  useEffect(() => { loadPage(1, true); }, [search, salesF, refreshSignal, loadPage]);
+
+  const handleLoadMore = () => {
+    const nextPage = dbPage + 1;
+    if (!dbLoading && dbItems.length < dbTotal) loadPage(nextPage, false);
+  };
+
+  // displayedHistory = dbItems (sudah dari DB, langsung render)
+  const displayedHistory = dbItems;
+  const filtered = dbItems; // alias untuk kompatibilitas kode di bawah
 
   const openEdit = (tx) => {
     // Pisahkan bagian numerik dari bon number untuk editing
@@ -140,26 +162,27 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore }) {
             </TouchableOpacity>
           ))}
           <Text style={{ color:C.muted, fontSize:12, alignSelf:'center', marginLeft:8 }}>
-            {filtered.length} bon
+            {dbTotal} bon
           </Text>
         </ScrollView>
       </View>
 
       <FlatList data={displayedHistory} renderItem={renderItem} keyExtractor={i => String(i.id)}
         contentContainerStyle={{ padding:14, paddingBottom:110 }}
-        onEndReached={() => { if (histPage * HIST_PAGE_SIZE < filtered.length) setHistPage(p => p+1); }}
+        onEndReached={handleLoadMore}
         onEndReachedThreshold={0.3}
         ListFooterComponent={
-          histPage * HIST_PAGE_SIZE < filtered.length ? (
+          dbLoading ? (
             <View style={{ alignItems:'center', paddingVertical:16 }}>
               <ActivityIndicator color={C.primary} />
               <Text style={{ color:C.muted, fontSize:11, marginTop:6 }}>
-                {displayedHistory.length}/{filtered.length} bon
+                {dbItems.length}/{dbTotal} bon
               </Text>
             </View>
-          ) : filtered.length > HIST_PAGE_SIZE ? (
+          ) : dbItems.length < dbTotal ? null
+          : dbTotal > PAGE_SIZE ? (
             <Text style={{ color:C.muted, fontSize:11, textAlign:'center', paddingVertical:12 }}>
-              Semua {filtered.length} bon ditampilkan
+              Semua {dbTotal} bon ditampilkan
             </Text>
           ) : null
         }

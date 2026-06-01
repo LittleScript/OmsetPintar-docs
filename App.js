@@ -52,12 +52,13 @@ import SettingsModal    from './src/screens/SettingsModal';
 WebBrowser.maybeCompleteAuthSession();
 
 export default function App() {
-  const [data,     setData]     = useState(null);
-  const [loading,  setLoading]  = useState(true);
-  const [dbReady,  setDbReady]  = useState(false);
-  const [tab,      setTab]      = useState('input');
-  const [showSett, setShowSett] = useState(false);
-  const inputDirtyRef = useRef(false); // diisi oleh InputScreen bila ada input belum tersimpan
+  const [data,          setData]          = useState(null);
+  const [loading,       setLoading]       = useState(true);
+  const [dbReady,       setDbReady]       = useState(false);
+  const [tab,           setTab]           = useState('input');
+  const [showSett,      setShowSett]      = useState(false);
+  const [refreshSignal, setRefreshSignal] = useState(0); // naik setiap write → trigger HistoryScreen reload
+  const inputDirtyRef = useRef(false);
   const [saveState,setSaveState]= useState('idle');
   const systemScheme = useColorScheme();
   const [themeMode, setThemeMode] = useState('dark');
@@ -98,6 +99,7 @@ export default function App() {
     if (!dbRef.current) return;
     const fresh = await assembleData(dbRef.current);
     if (fresh) setData(fresh);
+    setRefreshSignal(s => s + 1); // trigger HistoryScreen DB reload
   }, []);
 
   // ── Google Drive Backup ─────────────────────────────────────
@@ -152,11 +154,18 @@ export default function App() {
     })();
   }, []);
 
-  // Re-cek token saat app kembali ke foreground
+  // Re-cek token + auto-sync saat app kembali ke foreground
+  const AUTO_SYNC_INTERVAL = 4 * 60 * 60 * 1000; // 4 jam
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && driveEmail) {
         isGdriveTokenValid().then(valid => setDriveTokenExpired(!valid)).catch(() => {});
+        // Auto-sync jika sudah > 4 jam sejak sync terakhir
+        SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY).then(last => {
+          if (!last || Date.now() - parseInt(last) > AUTO_SYNC_INTERVAL) {
+            handleSyncDrive(true); // silent mode — tanpa Alert
+          }
+        }).catch(() => {});
       }
     });
     return () => sub.remove();
@@ -284,20 +293,23 @@ export default function App() {
     }
   }, [dbReady, data]);
 
-  // Lock kembali jika app background > 30 detik
+  // Lock kembali sesuai timeout yang diset user (0=langsung, 30=30s, 60=1m, 300=5m)
   useEffect(() => {
+    const lockTimeout = data?.lockTimeout ?? 30; // detik
     const sub = AppState.addEventListener('change', nextState => {
       if (nextState === 'background' || nextState === 'inactive') {
         lastBackgroundTime.current = Date.now();
+        // lockTimeout=0: langsung kunci saat masuk background
+        if (lockTimeout === 0 && data?.pinLockEnabled) setIsLocked(true);
       } else if (nextState === 'active') {
-        if (data?.pinLockEnabled && lastBackgroundTime.current) {
-          if (Date.now() - lastBackgroundTime.current > 30000) setIsLocked(true);
+        if (data?.pinLockEnabled && lockTimeout > 0 && lastBackgroundTime.current) {
+          if (Date.now() - lastBackgroundTime.current > lockTimeout * 1000) setIsLocked(true);
         }
         lastBackgroundTime.current = null;
       }
     });
     return () => sub.remove();
-  }, [data?.pinLockEnabled]);
+  }, [data?.pinLockEnabled, data?.lockTimeout]);
 
   const handleAuthenticate = useCallback(async () => {
     try {
@@ -444,10 +456,11 @@ export default function App() {
   }, [reloadData]);
 
   // Google Drive Sync — merge dua arah untuk multi-device
-  const handleSyncDrive = useCallback(async () => {
+  // silent=true: sinkron di background tanpa Alert (dipakai auto-sync foreground)
+  const handleSyncDrive = useCallback(async (silent = false) => {
     const valid = await isGdriveTokenValid();
     if (!valid) {
-      Alert.alert('⚠️ Sesi Expired', 'Token Google Drive sudah expired.\nReconnect dulu di Settings → Google Drive.');
+      if (!silent) Alert.alert('⚠️ Sesi Expired', 'Token Google Drive sudah expired.\nReconnect dulu di Settings → Google Drive.');
       return;
     }
     setDriveSyncing(true);
@@ -521,13 +534,13 @@ export default function App() {
         await reloadData();
       }
       await doUpload();
-      Alert.alert('✅ Sinkron Selesai',
+      if (!silent) Alert.alert('✅ Sinkron Selesai',
         synced > 0
           ? `${synced} transaksi baru dari perangkat lain berhasil digabung.\nData gabungan telah diupload ke Drive.`
           : 'Semua data sudah sinkron.\nTidak ada transaksi baru dari perangkat lain.'
       );
     } catch(e) {
-      Alert.alert('Sinkron Gagal', String(e));
+      if (!silent) Alert.alert('Sinkron Gagal', String(e));
     } finally {
       setDriveSyncing(false);
     }
@@ -664,7 +677,7 @@ export default function App() {
       <View style={st.flex1}>
         {tab==='input'     && <InputScreen data={data} onSave={handleSave} dirtyRef={inputDirtyRef} />}
         {tab==='dashboard' && <DashboardScreen data={data} onYearChange={handleYearChange} />}
-        {tab==='riwayat'   && <HistoryScreen data={data} onDelete={handleDelete} onEdit={handleEdit} onRestore={handleRestore} />}
+        {tab==='riwayat'   && <HistoryScreen data={data} onDelete={handleDelete} onEdit={handleEdit} onRestore={handleRestore} refreshSignal={refreshSignal} />}
         {tab==='ranking'   && <RankingScreen data={data} />}
         {tab==='pelanggan' && <CustomersScreen data={data} onMerge={handleMergeCustomer} onIgnoreTypo={handleIgnoreTypo} />}
       </View>

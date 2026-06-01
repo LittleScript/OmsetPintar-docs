@@ -35,7 +35,8 @@ export async function initDb() {
       pin_lock_enabled   INTEGER NOT NULL DEFAULT 0,
       notif_enabled      INTEGER NOT NULL DEFAULT 0,
       notif_hour         INTEGER NOT NULL DEFAULT 20,
-      onboarding_done    INTEGER NOT NULL DEFAULT 0
+      onboarding_done    INTEGER NOT NULL DEFAULT 0,
+      lock_timeout       INTEGER NOT NULL DEFAULT 30
     );
     INSERT OR IGNORE INTO settings (id) VALUES (1);
 
@@ -89,6 +90,7 @@ export async function initDb() {
   try { await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_enabled INTEGER NOT NULL DEFAULT 0`); } catch(e) {}
   try { await db.execAsync(`ALTER TABLE settings ADD COLUMN notif_hour INTEGER NOT NULL DEFAULT 20`); } catch(e) {}
   try { await db.execAsync(`ALTER TABLE settings ADD COLUMN onboarding_done INTEGER NOT NULL DEFAULT 0`); } catch(e) {}
+  try { await db.execAsync(`ALTER TABLE settings ADD COLUMN lock_timeout INTEGER NOT NULL DEFAULT 30`); } catch(e) {}
 }
 
 // ─── DATA ACCESS ──────────────────────────────────────────────────────────────
@@ -134,6 +136,7 @@ export async function assembleData(db) {
     notifEnabled:     !!cfg.notif_enabled,
     notifHour:        cfg.notif_hour ?? 20,
     onboardingDone:   !!cfg.onboarding_done,
+    lockTimeout:      cfg.lock_timeout ?? 30,
     companyName:      cfg.company_name,
     isSetupComplete:  !!cfg.is_setup_complete,
     bonConfig: {
@@ -249,6 +252,7 @@ export async function updateSettings(db, fields) {
   if (fields.pinLockEnabled!=null){ sets.push('pin_lock_enabled=?');vals.push(fields.pinLockEnabled?1:0); }
   if (fields.notifEnabled  !=null){ sets.push('notif_enabled=?');   vals.push(fields.notifEnabled?1:0); }
   if (fields.notifHour     !=null){ sets.push('notif_hour=?');      vals.push(fields.notifHour); }
+  if (fields.lockTimeout   !=null){ sets.push('lock_timeout=?');    vals.push(fields.lockTimeout); }
   if (!sets.length) return;
   await db.runAsync(`UPDATE settings SET ${sets.join(',')} WHERE id=1`, vals);
 }
@@ -280,6 +284,46 @@ export async function addIgnoredTypoPair(db, sales, normA, normB) {
 export async function loadIgnoredTypoPairs(db) {
   const rows = await db.getAllAsync('SELECT sales, norm_a, norm_b FROM typo_ignored');
   return new Set(rows.map(r => `${r.sales}|||${r.norm_a}|||${r.norm_b}`));
+}
+
+// ─── DB PAGINATION (untuk HistoryScreen) ──────────────────────────────────────
+export async function loadTransactionsPaged(db, { page = 1, pageSize = 30, salesFilter = 'ALL', search = '' }) {
+  const params = [];
+  let where = '';
+  if (salesFilter && salesFilter !== 'ALL') {
+    where += ' AND sales_name=?';
+    params.push(salesFilter);
+  }
+  if (search.trim()) {
+    where += ' AND (LOWER(customer_name) LIKE ? OR LOWER(bon_number) LIKE ?)';
+    const s = `%${search.trim().toLowerCase()}%`;
+    params.push(s, s);
+  }
+  const offset = (page - 1) * pageSize;
+  const rows = await db.getAllAsync(
+    `SELECT * FROM transactions WHERE 1=1 ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+    [...params, pageSize, offset]
+  );
+  return rows.map(dbRowToTx);
+}
+
+export async function countTransactionsPaged(db, { salesFilter = 'ALL', search = '' }) {
+  const params = [];
+  let where = '';
+  if (salesFilter && salesFilter !== 'ALL') {
+    where += ' AND sales_name=?';
+    params.push(salesFilter);
+  }
+  if (search.trim()) {
+    where += ' AND (LOWER(customer_name) LIKE ? OR LOWER(bon_number) LIKE ?)';
+    const s = `%${search.trim().toLowerCase()}%`;
+    params.push(s, s);
+  }
+  const row = await db.getFirstAsync(
+    `SELECT COUNT(*) as cnt FROM transactions WHERE 1=1 ${where}`,
+    params
+  );
+  return row?.cnt || 0;
 }
 
 export async function mergeCustomerName(db, oldName, newName, sales) {

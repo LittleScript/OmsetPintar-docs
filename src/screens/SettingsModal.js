@@ -22,6 +22,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   const { salesList, bonConfig, dateFormat, companyName } = data;
   const [themeMode, setThemeMode]       = useState(data.themeMode||'dark');
   const [pinLockEnabled, setPinLockEnabled] = useState(data.pinLockEnabled||false);
+  const [lockTimeout,    setLockTimeout]    = useState(data.lockTimeout ?? 30);
   const [notifEnabled,   setNotifEnabled]   = useState(data.notifEnabled||false);
   const [notifHour,      setNotifHour]      = useState(data.notifHour??20);
   const [importPreview, setImportPreview] = useState(null);
@@ -871,7 +872,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     if (!result.success) return; // batal — jangan aktifkan
                     setPinLockEnabled(true);
                     onUpdate({ pinLockEnabled: true });
-                    Alert.alert('🔐 Kunci Aktif', 'Aplikasi akan dikunci saat dibuka kembali atau setelah 30 detik di background.');
+                    const tLabel = lockTimeout === 0 ? 'langsung' : lockTimeout < 60 ? `${lockTimeout} detik` : `${lockTimeout/60} menit`;
+                    Alert.alert('🔐 Kunci Aktif', `Aplikasi akan dikunci ${tLabel} setelah background.`);
                   } else {
                     // ── NONAKTIFKAN: langsung disable ──
                     setPinLockEnabled(false);
@@ -885,6 +887,33 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   alignSelf: pinLockEnabled ? 'flex-end' : 'flex-start' }} />
               </TouchableOpacity>
             </View>
+            {/* Lock Timeout — hanya muncul jika kunci aktif */}
+            {pinLockEnabled && (
+              <View style={{ marginTop:12 }}>
+                <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', marginBottom:8 }}>
+                  ⏱ KUNCI OTOMATIS SETELAH
+                </Text>
+                <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                  {[
+                    { val:0,   label:'Langsung' },
+                    { val:30,  label:'30 detik' },
+                    { val:60,  label:'1 menit'  },
+                    { val:300, label:'5 menit'  },
+                  ].map(opt => (
+                    <TouchableOpacity key={opt.val}
+                      onPress={() => { setLockTimeout(opt.val); onUpdate({ lockTimeout: opt.val }); }}
+                      style={{ paddingHorizontal:14, paddingVertical:8, borderRadius:10,
+                        backgroundColor: lockTimeout === opt.val ? C.primary : C.input,
+                        borderWidth:1, borderColor: lockTimeout === opt.val ? C.primary : C.border }}>
+                      <Text style={{ color: lockTimeout === opt.val ? '#fff' : C.muted,
+                        fontSize:12, fontWeight:'700' }}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
           </View>
 
           {/* Notifikasi Pengingat */}
