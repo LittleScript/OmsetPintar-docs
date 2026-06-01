@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.2.1';
+const APP_VER    = '4.2.2';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -3511,31 +3511,34 @@ export default function App() {
   // Load stored drive state on startup + cek token validity
   useEffect(() => {
     (async () => {
-      const email = await SecureStore.getItemAsync(GDRIVE_EMAIL_KEY);
-      const last  = await SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY);
-      if (email) {
-        setDriveEmail(email);
-        // Re-register background backup task — hilang setelah reinstall/update app
-        BackgroundFetch.registerTaskAsync(GDRIVE_TASK_NAME, {
-          minimumInterval: 15 * 60,
-          stopOnTerminate: false,
-          startOnBoot: true,
-        }).catch(() => {});
-        const valid = await isGdriveTokenValid();
-        setDriveTokenExpired(!valid);
-      }
-      if (last) setDriveLastSync(
-        new Date(parseInt(last)).toLocaleDateString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
-      );
+      try {
+        const email = await SecureStore.getItemAsync(GDRIVE_EMAIL_KEY);
+        const last  = await SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY);
+        if (email) {
+          setDriveEmail(email);
+          // Re-register background backup task — hilang setelah reinstall/update app
+          try {
+            await BackgroundFetch.registerTaskAsync(GDRIVE_TASK_NAME, {
+              minimumInterval: 15 * 60,
+              stopOnTerminate: false,
+              startOnBoot: true,
+            });
+          } catch(_) {} // task sudah registered dari sesi sebelumnya — abaikan
+          const valid = await isGdriveTokenValid();
+          setDriveTokenExpired(!valid);
+        }
+        if (last) setDriveLastSync(
+          new Date(parseInt(last)).toLocaleDateString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+        );
+      } catch(_) {} // jangan crash startup jika SecureStore / token check gagal
     })();
   }, []);
 
   // Re-cek token saat app kembali ke foreground
   useEffect(() => {
-    const sub = AppState.addEventListener('change', async (state) => {
+    const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && driveEmail) {
-        const valid = await isGdriveTokenValid();
-        setDriveTokenExpired(!valid);
+        isGdriveTokenValid().then(valid => setDriveTokenExpired(!valid)).catch(() => {});
       }
     });
     return () => sub.remove();
