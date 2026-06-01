@@ -46,29 +46,62 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.3.0';
+const APP_VER    = '4.4.0';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
-// Isi dengan Web Client ID dari Google Cloud Console (lihat GOOGLE_DRIVE_SETUP.md)
-const GOOGLE_WEB_CLIENT_ID = '846894493859-vl3v947mucd6chu7tm0agi7kbitpb27a.apps.googleusercontent.com';
-const GDRIVE_TOKEN_KEY      = 'gdrive_access_token';
-const GDRIVE_EXPIRY_KEY     = 'gdrive_token_expiry'; // timestamp ms kapan token expired
-const GDRIVE_EMAIL_KEY      = 'gdrive_user_email';
-const GDRIVE_LAST_BACKUP_KEY= 'gdrive_last_backup';
-const GDRIVE_HOUR_KEY       = 'gdrive_backup_hour'; // jam backup: 0–23, default 23
-const GDRIVE_TASK_NAME      = 'OMSETKU_GDRIVE_BACKUP';
-const NOTIF_TASK_ID         = 'omsetku-daily-reminder';
+// Android OAuth Client ID — buat di Google Cloud Console:
+//   1. Dapatkan SHA-1 keystore EAS: jalankan  eas credentials  di terminal
+//   2. Buat OAuth client → Application type: Android
+//      Package name: com.omsetku.app  |  SHA-1: [dari langkah 1]
+//   3. Isi GOOGLE_ANDROID_CLIENT_ID dengan client ID yang didapat
+const GOOGLE_ANDROID_CLIENT_ID = 'ISIAN_ANDROID_CLIENT_ID.apps.googleusercontent.com';
+
+const GDRIVE_REDIRECT_URI    = 'com.omsetku.app:/oauth2redirect';
+const GDRIVE_TOKEN_KEY       = 'gdrive_access_token';
+const GDRIVE_REFRESH_KEY     = 'gdrive_refresh_token';   // refresh token — auto-renew
+const GDRIVE_EXPIRY_KEY      = 'gdrive_token_expiry';
+const GDRIVE_EMAIL_KEY       = 'gdrive_user_email';
+const GDRIVE_LAST_BACKUP_KEY = 'gdrive_last_backup';
+const GDRIVE_HOUR_KEY        = 'gdrive_backup_hour';
+const GDRIVE_TASK_NAME       = 'OMSETKU_GDRIVE_BACKUP';
+const NOTIF_TASK_ID          = 'omsetku-daily-reminder';
+
+const GOOGLE_DISCOVERY = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint:         'https://oauth2.googleapis.com/token',
+};
 
 WebBrowser.maybeCompleteAuthSession();
 
-// Cek apakah token GDrive masih valid (belum expired)
+// Auto-refresh access token menggunakan refresh token (solves B-01)
+async function refreshGdriveToken() {
+  const refreshToken = await SecureStore.getItemAsync(GDRIVE_REFRESH_KEY);
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `refresh_token=${encodeURIComponent(refreshToken)}&client_id=${encodeURIComponent(GOOGLE_ANDROID_CLIENT_ID)}&grant_type=refresh_token`,
+    });
+    const data = await res.json();
+    if (!res.ok || !data.access_token) return false;
+    await SecureStore.setItemAsync(GDRIVE_TOKEN_KEY, data.access_token);
+    await SecureStore.setItemAsync(GDRIVE_EXPIRY_KEY,
+      String(Date.now() + (data.expires_in || 3600) * 1000));
+    return true;
+  } catch(e) { return false; }
+}
+
+// Cek apakah token GDrive masih valid — jika expired, coba auto-refresh dulu
 async function isGdriveTokenValid() {
   const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
   if (!token) return false;
   const expiry = await SecureStore.getItemAsync(GDRIVE_EXPIRY_KEY);
-  if (!expiry) return true; // tidak ada info expiry → asumsi masih valid
-  return Date.now() < parseInt(expiry, 10) - 60_000; // buffer 60 detik
+  if (!expiry) return true;
+  if (Date.now() < parseInt(expiry, 10) - 60_000) return true;
+  // Token expired → coba refresh otomatis
+  return refreshGdriveToken();
 }
 
 // Konfigurasi tampilan notifikasi saat app foreground
@@ -623,6 +656,54 @@ function getAutocomplete(query, txns, sales, limit=5) {
   return [...L1,...L2,...L3].sort((a,b)=>b.count-a.count).slice(0,limit);
 }
 
+// ─── JARO-WINKLER SIMILARITY ─────────────────────────────────────────────────
+// Lebih akurat dari Levenshtein untuk nama orang: toleran terhadap transposisi
+// dan memberi bonus untuk awalan yang sama (prefix weighting)
+
+function jaro(a, b) {
+  if (a === b) return 1;
+  const l1 = a.length, l2 = b.length;
+  if (!l1 || !l2) return 0;
+  const win = Math.max(Math.floor(Math.max(l1, l2) / 2) - 1, 0);
+  const aM = Array(l1).fill(false), bM = Array(l2).fill(false);
+  let m = 0;
+  for (let i = 0; i < l1; i++) {
+    const lo = Math.max(0, i - win), hi = Math.min(i + win + 1, l2);
+    for (let j = lo; j < hi; j++) {
+      if (bM[j] || a[i] !== b[j]) continue;
+      aM[i] = bM[j] = true; m++; break;
+    }
+  }
+  if (!m) return 0;
+  let t = 0, k = 0;
+  for (let i = 0; i < l1; i++) {
+    if (!aM[i]) continue;
+    while (!bM[k]) k++;
+    if (a[i] !== b[k]) t++;
+    k++;
+  }
+  return (m/l1 + m/l2 + (m - t/2)/m) / 3;
+}
+
+function jaroWinkler(a, b) {
+  const j = jaro(a, b);
+  let pfx = 0;
+  for (let i = 0; i < Math.min(4, a.length, b.length); i++) {
+    if (a[i] === b[i]) pfx++; else break;
+  }
+  return j + pfx * 0.1 * (1 - j);
+}
+
+// Token Sort + Jaro-Winkler: handle nama terbalik ("Budi Santoso" vs "Santoso Budi")
+function nameSimilarity(normA, normB) {
+  if (normA === normB) return 1;
+  const scoreOrig = jaroWinkler(normA, normB);
+  const sortA = normA.split(' ').sort().join(' ');
+  const sortB = normB.split(' ').sort().join(' ');
+  const scoreSort = jaroWinkler(sortA, sortB);
+  return Math.max(scoreOrig, scoreSort);
+}
+
 // ─── TYPO / SIMILAR NAME DETECTION ───────────────────────────────────────────
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
@@ -692,17 +773,15 @@ function findSimilarNames(transactions) {
       const pairKey = [normA, normB].sort().join('|||');
       if (seen.has(pairKey)) continue;
 
-      const dist      = levenshtein(normA, normB);
-      const maxLen    = Math.max(normA.length, normB.length);
-      const minLen    = Math.min(normA.length, normB.length);
-      if (minLen < 3) continue; // nama terlalu pendek → false positive tinggi
-      // Threshold ketat: hanya 1-char-diff, kecuali nama panjang (≥7 char) → boleh 2
-      const threshold = maxLen >= 7 ? 2 : 1;
+      const minLen = Math.min(normA.length, normB.length);
+      if (minLen < 3) continue; // nama terlalu pendek → skip
 
-      // Cek 1: Levenshtein (typo 1 karakter — "andi" vs "andy")
-      const isTypo = dist > 0 && dist <= threshold;
+      // Jaro-Winkler + Token Sort: lebih akurat untuk nama orang
+      const JW_THRESHOLD = 0.88; // ≥88% mirip → flagged
+      const similarity   = nameSimilarity(normA, normB);
+      const isTypo       = similarity >= JW_THRESHOLD && similarity < 1.0;
 
-      // Cek 2: Word overlap (nama parsial — "andi hutapea" vs "hutapea")
+      // Word overlap sebagai fallback: "andi hutapea" ⊃ "hutapea"
       const isPartial = !isTypo && hasWordOverlap(normA, normB);
 
       if (isTypo || isPartial) {
@@ -711,7 +790,8 @@ function findSimilarNames(transactions) {
           nameA:  a.name, countA: a.count,
           nameB:  b.name, countB: b.count,
           sales:  a.sales,
-          reason: isTypo ? `Typo (${dist} karakter beda)` : 'Mungkin nama parsial',
+          similarity,
+          reason: isTypo ? `Mirip ${(similarity*100).toFixed(0)}%` : 'Nama parsial',
         });
       }
     }
@@ -1255,7 +1335,10 @@ function DashboardScreen({ data, onYearChange }) {
   const st = getStyles(C);
 
   const { salesList, transactions, activeYear, dateFormat } = data;
-  const [busyMonthFilter, setBusyMonthFilter] = useState(0); // 0 = all, 1-12 = bulan
+  const [busyMonthFilter,  setBusyMonthFilter]  = useState(0);
+  const [showShareModal,   setShowShareModal]    = useState(false);
+
+  const DAY_NAMES_ID = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
 
   const activeTxns = useMemo(() =>
     transactions.filter(t => !t.deletedAt), [transactions]);
@@ -1300,7 +1383,50 @@ function DashboardScreen({ data, onYearChange }) {
   });
   const busyMax = busyDays.reduce((mx, d) => Math.max(mx, d.total), 0);
 
+  // ── Share rekap dengan pilihan periode ──────────────────────────────────────
+  const handleShare = async (period) => {
+    const activeTxns = transactions.filter(t => !t.deletedAt);
+    const now        = new Date();
+    let txns, header, sub;
+
+    if (period === 'today') {
+      txns   = activeTxns.filter(t => t.date === today);
+      header = 'Rekap Omset Hari Ini';
+      sub    = `${DAY_NAMES_ID[new Date(today+'T12:00:00').getDay()]}, ${fmtDate(today, dateFormat)}`;
+    } else if (period === 'week') {
+      txns   = activeTxns.filter(t => t.date >= mon && t.date <= sun);
+      header = 'Rekap Omset Minggu Ini';
+      sub    = `${fmtDate(mon, dateFormat)} – ${fmtDate(sun, dateFormat)}`;
+    } else {
+      const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      txns   = activeTxns.filter(t => t.date.startsWith(ym));
+      header = `Rekap Omset ${MONTHS_F[now.getMonth()]} ${now.getFullYear()}`;
+      sub    = null;
+    }
+
+    const total = txns.reduce((a,t) => a+t.amount, 0);
+    const lines = [
+      `📊 *${header}*`,
+      `🏪 ${data.companyName || 'Toko'}${sub ? '  |  ' + sub : ''}`,
+      '',
+      `💰 Total: *${toIdr(total)}*`,
+      `🧾 Jumlah bon: ${txns.length}`,
+      '',
+    ];
+    if (txns.length > 0) {
+      salesList.forEach(s => {
+        const sTx = txns.filter(t => t.sales === s);
+        if (sTx.length > 0)
+          lines.push(`• ${s}: ${toIdr(sTx.reduce((a,t)=>a+t.amount,0))} (${sTx.length} bon)`);
+      });
+      lines.push('');
+    }
+    lines.push('_via OmsetKu_');
+    try { await Share.share({ message: lines.join('\n') }); } catch(e) {}
+  };
+
   return (
+    <View style={st.flex1}>
     <ScrollView style={st.container} contentContainerStyle={st.scroll}>
       {/* Year */}
       <View style={[st.card, { flexDirection:'row', alignItems:'center', justifyContent:'center', gap:24 }]}>
@@ -1328,27 +1454,10 @@ function DashboardScreen({ data, onYearChange }) {
             HARI INI · {fmtDate(today, dateFormat)}
           </Text>
           <TouchableOpacity
-            onPress={async () => {
-              const lines = [
-                `📊 *Rekap Omset Hari Ini*`,
-                `🏪 ${data.companyName || 'Toko'}  |  ${fmtDate(today, dateFormat)}`,
-                ``,
-                `💰 Total: *${toIdr(todayTotal)}*`,
-                `🧾 Jumlah Bon: ${todayTxns.length}`,
-                ``,
-              ];
-              if (todayTxns.length > 0) {
-                salesList.forEach(s => {
-                  const sTx = todayTxns.filter(t => t.sales === s);
-                  if (sTx.length > 0) lines.push(`• ${s}: ${toIdr(sTx.reduce((a,t)=>a+t.amount,0))} (${sTx.length} bon)`);
-                });
-                lines.push('');
-              }
-              lines.push(`_via OmsetKu_`);
-              try { await Share.share({ message: lines.join('\n') }); } catch(e) {}
-            }}
-            style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:10, paddingVertical:5 }}>
-            <Text style={{ color:C.muted, fontSize:12 }}>📤 Share</Text>
+            onPress={() => setShowShareModal(true)}
+            style={{ backgroundColor:C.primary+'22', borderRadius:8, paddingHorizontal:10, paddingVertical:5,
+              borderWidth:1, borderColor:C.primary+'44' }}>
+            <Text style={{ color:C.primary, fontSize:12, fontWeight:'700' }}>📤 Share Rekap</Text>
           </TouchableOpacity>
         </View>
         <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:8 }}>
@@ -1522,6 +1631,65 @@ function DashboardScreen({ data, onYearChange }) {
         </View>
       )}
     </ScrollView>
+
+      {/* ── Share Rekap Modal ── */}
+      {showShareModal && (
+        <Modal visible animationType="slide" transparent onRequestClose={() => setShowShareModal(false)}>
+          <TouchableOpacity style={{ flex:1, backgroundColor:'rgba(0,0,0,0.55)' }}
+            onPress={() => setShowShareModal(false)} activeOpacity={1}>
+            <View style={{ position:'absolute', bottom:0, left:0, right:0,
+              backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24,
+              padding:20, paddingBottom:36 }}>
+              <Text style={{ color:C.text, fontSize:17, fontWeight:'800', marginBottom:4 }}>
+                📤 Bagikan Rekap Omset
+              </Text>
+              <Text style={{ color:C.muted, fontSize:12, marginBottom:16 }}>
+                Pilih periode yang mau dibagikan
+              </Text>
+              {[
+                { id:'today', icon:'📅', label:'Hari Ini',
+                  sub: `${DAY_NAMES_ID[new Date(today+'T12:00:00').getDay()]}, ${fmtDate(today, dateFormat)}`,
+                  count: todayTxns.length, total: todayTotal },
+                { id:'week',  icon:'📆', label:'Minggu Ini',
+                  sub: `${fmtDate(mon, dateFormat)} – ${fmtDate(sun, dateFormat)}`,
+                  count: weekTxns.length,  total: weekTotal },
+                { id:'month', icon:'🗓', label:`Bulan ${MONTHS_F[new Date().getMonth()]}`,
+                  sub: String(new Date().getFullYear()),
+                  count: activeTxns.filter(t => t.date.startsWith(
+                    `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`
+                  )).length,
+                  total: activeTxns.filter(t => t.date.startsWith(
+                    `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`
+                  )).reduce((a,t)=>a+t.amount,0) },
+              ].map(opt => (
+                <TouchableOpacity key={opt.id}
+                  onPress={() => { setShowShareModal(false); handleShare(opt.id); }}
+                  style={{ flexDirection:'row', alignItems:'center', paddingVertical:14,
+                    borderBottomWidth:1, borderBottomColor:C.border, gap:12 }}>
+                  <Text style={{ fontSize:22 }}>{opt.icon}</Text>
+                  <View style={{ flex:1 }}>
+                    <Text style={{ color:C.text, fontSize:15, fontWeight:'700' }}>{opt.label}</Text>
+                    <Text style={{ color:C.muted, fontSize:11, marginTop:1 }}>{opt.sub}</Text>
+                  </View>
+                  <View style={{ alignItems:'flex-end' }}>
+                    <Text style={[{ color:C.accent, fontSize:13, fontWeight:'800' }]}>
+                      {toShort(opt.total)}
+                    </Text>
+                    <Text style={{ color:C.muted, fontSize:10 }}>{opt.count} bon</Text>
+                  </View>
+                  <Text style={{ color:C.muted, fontSize:18 }}>›</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={() => setShowShareModal(false)}
+                style={{ marginTop:14, backgroundColor:C.input, borderRadius:12,
+                  padding:12, alignItems:'center' }}>
+                <Text style={{ color:C.muted, fontWeight:'700' }}>Batal</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+    </View>
   );
 }
 
@@ -3548,17 +3716,19 @@ export default function App() {
   const [driveSyncing,     setDriveSyncing]     = useState(false);
   const [driveTokenExpired,setDriveTokenExpired]= useState(false);
 
-  // expo-auth-session v6: Google.useAuthRequest di Android WAJIB ada clientId sebagai
-  // fallback — tanpanya invariantClientId() throw saat render → app crash sebelum UI muncul.
-  // redirectUri harus hardcode ke proxy Expo karena makeRedirectUri({useProxy:true}) di v6
-  // menghasilkan custom scheme (com.omsetku.app://) yang ditolak Google Web client (Error 400).
-  const GDRIVE_REDIRECT_URI = 'https://auth.expo.io/@aliangkoko/omsetku';
-  const [gRequest, gResponse, gPromptAsync] = Google.useAuthRequest({
-    clientId:    GOOGLE_WEB_CLIENT_ID,
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    scopes: ['https://www.googleapis.com/auth/drive.file', 'email', 'profile'],
-    redirectUri: GDRIVE_REDIRECT_URI,
-  });
+  // Native Android OAuth — PKCE flow (tanpa client secret, dapat refresh_token)
+  // Butuh Android OAuth client ID dengan SHA-1 EAS → lihat instruksi di konstanta atas
+  const [gRequest, gResponse, gPromptAsync] = AuthSession.useAuthRequest(
+    {
+      clientId:    GOOGLE_ANDROID_CLIENT_ID,
+      redirectUri: GDRIVE_REDIRECT_URI,
+      scopes:      ['https://www.googleapis.com/auth/drive.file', 'email', 'profile'],
+      responseType:'code',
+      usePKCE:     true,
+      extraParams: { access_type: 'offline', prompt: 'consent' }, // agar dapat refresh_token
+    },
+    GOOGLE_DISCOVERY
+  );
 
   // Load stored drive state on startup + cek token validity
   useEffect(() => {
@@ -3596,37 +3766,64 @@ export default function App() {
     return () => sub.remove();
   }, [driveEmail]);
 
-  // Handle OAuth response
+  // Handle OAuth response — tukar auth code dengan access + refresh token (PKCE)
   useEffect(() => {
-    if (gResponse?.type === 'success') {
-      const { authentication } = gResponse;
-      (async () => {
-        try {
-          // Simpan token
-          await SecureStore.setItemAsync(GDRIVE_TOKEN_KEY, authentication.accessToken);
-          // Simpan expiry — default 55 menit jika expiresIn tidak ada
-          const expiresIn = authentication.expiresIn ?? 3300;
-          await SecureStore.setItemAsync(GDRIVE_EXPIRY_KEY, String(Date.now() + expiresIn * 1000));
-          setDriveTokenExpired(false);
-          // Ambil email user
-          const infoRes = await fetch('https://www.googleapis.com/userinfo/v2/me', {
-            headers: { Authorization: `Bearer ${authentication.accessToken}` },
-          });
-          const info = await infoRes.json();
-          await SecureStore.setItemAsync(GDRIVE_EMAIL_KEY, info.email || '');
-          setDriveEmail(info.email || '');
-          // Register background task
-          await BackgroundFetch.registerTaskAsync(GDRIVE_TASK_NAME, {
-            minimumInterval: 15 * 60, // 15 menit (minimum Android)
-            stopOnTerminate: false,
-            startOnBoot: true,
-          }).catch(() => {});
-          Alert.alert('✅ Google Drive Terhubung', `Backup otomatis aktif untuk:\n${info.email}`);
-        } catch(e) {
-          Alert.alert('Error', 'Gagal menyimpan token Drive: ' + String(e));
+    if (gResponse?.type !== 'success') return;
+    (async () => {
+      try {
+        const { code } = gResponse.params;
+        if (!code) throw new Error('Tidak ada auth code dari Google');
+
+        // Tukar code dengan token (PKCE — tanpa client secret)
+        const body = [
+          `code=${encodeURIComponent(code)}`,
+          `client_id=${encodeURIComponent(GOOGLE_ANDROID_CLIENT_ID)}`,
+          `redirect_uri=${encodeURIComponent(GDRIVE_REDIRECT_URI)}`,
+          `grant_type=authorization_code`,
+          `code_verifier=${encodeURIComponent(gRequest?.codeVerifier || '')}`,
+        ].join('&');
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        });
+        const tokens = await tokenRes.json();
+        if (!tokenRes.ok || !tokens.access_token) {
+          throw new Error(tokens.error_description || tokens.error || 'Token exchange gagal');
         }
-      })();
-    }
+
+        // Simpan access token + expiry
+        await SecureStore.setItemAsync(GDRIVE_TOKEN_KEY, tokens.access_token);
+        await SecureStore.setItemAsync(GDRIVE_EXPIRY_KEY,
+          String(Date.now() + (tokens.expires_in || 3600) * 1000));
+
+        // Simpan refresh token — auto-renew, tidak perlu reconnect manual lagi
+        if (tokens.refresh_token) {
+          await SecureStore.setItemAsync(GDRIVE_REFRESH_KEY, tokens.refresh_token);
+        }
+
+        setDriveTokenExpired(false);
+
+        // Ambil email user
+        const infoRes = await fetch('https://www.googleapis.com/userinfo/v2/me', {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        });
+        const info = await infoRes.json();
+        await SecureStore.setItemAsync(GDRIVE_EMAIL_KEY, info.email || '');
+        setDriveEmail(info.email || '');
+
+        // Register background task
+        try {
+          await BackgroundFetch.registerTaskAsync(GDRIVE_TASK_NAME, {
+            minimumInterval: 15 * 60, stopOnTerminate: false, startOnBoot: true,
+          });
+        } catch(_) {}
+
+        Alert.alert('✅ Google Drive Terhubung', `Backup otomatis aktif untuk:\n${info.email}`);
+      } catch(e) {
+        Alert.alert('Gagal Hubungkan Drive', String(e));
+      }
+    })();
   }, [gResponse]);
 
   const handleManualDriveBackup = async () => {
@@ -3667,6 +3864,8 @@ export default function App() {
         { text: 'Batal', style: 'cancel' },
         { text: 'Putuskan', style: 'destructive', onPress: async () => {
           await SecureStore.deleteItemAsync(GDRIVE_TOKEN_KEY);
+          await SecureStore.deleteItemAsync(GDRIVE_REFRESH_KEY).catch(() => {});
+          await SecureStore.deleteItemAsync(GDRIVE_EXPIRY_KEY).catch(() => {});
           await SecureStore.deleteItemAsync(GDRIVE_EMAIL_KEY);
           await BackgroundFetch.unregisterTaskAsync(GDRIVE_TASK_NAME).catch(() => {});
           setDriveEmail('');
@@ -3999,7 +4198,14 @@ export default function App() {
           driveLastSync={driveLastSync}
           driveSyncing={driveSyncing}
           driveTokenExpired={driveTokenExpired}
-          onDriveConnect={() => gRequest && gPromptAsync()}
+          onDriveConnect={() => {
+            if (GOOGLE_ANDROID_CLIENT_ID.startsWith('ISIAN')) {
+              Alert.alert('Belum Dikonfigurasi',
+                'Android OAuth Client ID belum diisi.\n\nLihat panduan GOOGLE_DRIVE_SETUP.md\nuntuk mendapatkan SHA-1 dan membuat\nAndroid OAuth Client di Google Cloud Console.');
+              return;
+            }
+            gRequest && gPromptAsync();
+          }}
           onDriveBackup={handleManualDriveBackup}
           onDriveDisconnect={handleDisconnectDrive}
         />
