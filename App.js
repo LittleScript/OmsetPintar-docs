@@ -45,20 +45,9 @@ import {
 import { PaywallSheet }      from './src/components/PaywallSheet';
 import { PurchasesContext }  from './src/contexts'; // shared context, no circular import
 
-// ── widget ───────────────────────────────────────────────────────────────────
-import { registerWidgetTaskHandler } from 'react-native-android-widget';
-import { widgetTaskHandler }         from './src/widget/widgetTaskHandler';
-import { OmsetKuWidget }             from './src/widget/OmsetKuWidget';
-
-// Daftarkan widget task handler (dipanggil Android saat widget perlu render)
-// Harus di-register di module level sebelum komponen di-mount
-let updateWidgetFn = null;
-try {
-  registerWidgetTaskHandler(widgetTaskHandler);
-  updateWidgetFn = require('react-native-android-widget').updateWidget;
-} catch(_) {}
-
 // ── screens ───────────────────────────────────────────────────────────────────
+// Widget (react-native-android-widget) dinonaktifkan — butuh Expo 54+
+// Kode widget disimpan di src/widget/ untuk implementasi nanti
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import SetupWizard      from './src/screens/SetupWizard';
 import InputScreen      from './src/screens/InputScreen';
@@ -114,7 +103,7 @@ export default function App() {
         setData(loaded || { isSetupComplete: false, salesList: [], transactions: [], companyName: '', bonConfig:{prefix:'INV',separator:'-',digitLength:5}, dateFormat:'dd/mm/yyyy', activeYear:new Date().getFullYear(), lastDate:todayStr(), lastSales:'', nextSeq:1 });
         setDbReady(true);
         // Update widget dengan data terbaru saat app dibuka
-        if (loaded) setTimeout(() => refreshWidget(loaded), 500);
+        // Widget update dinonaktifkan (react-native-android-widget butuh Expo 54+)
       } catch(e) {
         Alert.alert('Database Error', String(e));
       } finally {
@@ -414,35 +403,6 @@ export default function App() {
     await reloadData();
   }, [reloadData]);
 
-  // ── Widget Update ──────────────────────────────────────────────────────────
-  const refreshWidget = useCallback(async (freshData) => {
-    if (!updateWidgetFn) return;
-    try {
-      const d = freshData || data;
-      if (!d) return;
-      const today = todayStr();
-      const todayTxns = (d.transactions || []).filter(t => !t.deletedAt && t.date === today);
-      const todayTotal = todayTxns.reduce((a, t) => a + t.amount, 0);
-      const salesLines = d.salesList
-        .map(s => {
-          const st = todayTxns.filter(t => t.sales === s);
-          if (!st.length) return null;
-          const tot = st.reduce((a, t) => a + t.amount, 0);
-          return `${s}: ${tot >= 1e6 ? (tot/1e6).toFixed(1)+'Jt' : tot >= 1e3 ? (tot/1e3).toFixed(0)+'K' : tot}`;
-        })
-        .filter(Boolean)
-        .join('  ');
-      const now = new Date().toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit' });
-      await updateWidgetFn('OmsetKuWidget', OmsetKuWidget, {
-        todayTotal,
-        todayCount: todayTxns.length,
-        companyName: d.companyName || 'OmsetKu',
-        salesLines,
-        lastUpdated: now,
-      });
-    } catch(_) {}
-  }, [data]);
-
   // ── In-App Review (setelah 10 transaksi tersimpan) ─────────────────────────
   const handleInAppReview = useCallback(async () => {
     try {
@@ -474,13 +434,10 @@ export default function App() {
       await insertTransaction(dbRef.current, tx);
       await reloadData();
       setSaveState('saved');
-      // Update widget + trigger in-app review setelah bon ke-10
-      handleInAppReview();
-      const fresh = await assembleData(dbRef.current);
-      refreshWidget(fresh);
+      handleInAppReview(); // trigger review setelah bon ke-10
     } catch(e) { setSaveState('error'); Alert.alert('Error', String(e)); }
     setTimeout(() => setSaveState('idle'), 2000);
-  }, [reloadData, handleInAppReview, refreshWidget]);
+  }, [reloadData, handleInAppReview]);
 
   const handleDelete = useCallback(async (id) => {
     await softDeleteTransaction(dbRef.current, id);

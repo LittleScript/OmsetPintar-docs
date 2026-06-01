@@ -26,26 +26,7 @@
       "@react-native-community/datetimepicker",
       "expo-local-authentication",
       "expo-secure-store",
-      "expo-notifications",
-      [
-        "react-native-android-widget",
-        {
-          "widgets": [
-            {
-              "name": "OmsetKuWidget",
-              "label": "OmsetKu — Omset Hari Ini",
-              "minWidth": "180dp",
-              "minHeight": "110dp",
-              "targetWidth": "270dp",
-              "targetHeight": "140dp",
-              "description": "Tampilkan omset hari ini langsung di layar utama",
-              "previewLayout": "@layout/rn_widget_preview_omsetku_widget",
-              "taskHandler": "./src/widget/widgetTaskHandler",
-              "updatePeriodMillis": 1800000
-            }
-          ]
-        }
-      ]
+      "expo-notifications"
     ],
     "owner": "aliangkoko",
     "extra": {
