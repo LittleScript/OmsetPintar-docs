@@ -4,7 +4,7 @@ export const MONTHS_F = ['Januari','Februari','Maret','April','Mei','Juni','Juli
 export const COLORS   = ['#2563eb','#22c55e','#f59e0b','#ec4899','#8b5cf6','#ef4444','#06b6d4','#84cc16'];
 export const DB_NAME  = 'OmsetKu.db';
 
-export const APP_VER    = '4.5.0';
+export const APP_VER    = '4.6.0';
 export const SCHEMA_VER = 1;
 
 // ─── THEMES ───────────────────────────────────────────────────────────────────

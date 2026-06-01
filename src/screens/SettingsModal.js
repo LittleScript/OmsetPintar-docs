@@ -10,8 +10,8 @@ import * as Notifications from 'expo-notifications';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { ThemeContext, getStyles, btnStyle } from '../theme';
 import { COLORS, MONTHS_F, APP_VER, SCHEMA_VER, GDRIVE_TOKEN_KEY, GDRIVE_HOUR_KEY, GDRIVE_TASK_NAME } from '../constants';
-import { toIdr, toShort, todayStr, fmtDate, getNorm, parseCsvText } from '../utils';
-import { isGdriveTokenValid } from '../services';
+import { toIdr, toShort, todayStr, fmtDate, getNorm, parseCsvText, padNum } from '../utils';
+import { isGdriveTokenValid, scheduleReminder, cancelReminder } from '../services';
 
 function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   driveEmail, driveLastSync, driveSyncing, driveTokenExpired,

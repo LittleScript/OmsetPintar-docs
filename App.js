@@ -51,6 +51,9 @@ import SettingsModal    from './src/screens/SettingsModal';
 // WebBrowser.maybeCompleteAuthSession perlu dipanggil di entry point
 WebBrowser.maybeCompleteAuthSession();
 
+// Module-level constants (tidak perlu re-create setiap render)
+const AUTO_SYNC_INTERVAL = 4 * 60 * 60 * 1000; // 4 jam
+
 export default function App() {
   const [data,          setData]          = useState(null);
   const [loading,       setLoading]       = useState(true);
@@ -155,15 +158,18 @@ export default function App() {
   }, []);
 
   // Re-cek token + auto-sync saat app kembali ke foreground
-  const AUTO_SYNC_INTERVAL = 4 * 60 * 60 * 1000; // 4 jam
+  // Gunakan ref untuk handleSyncDrive agar tidak ada stale closure
+  const syncDriveRef = useRef(null);
+  useEffect(() => { syncDriveRef.current = handleSyncDrive; });
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && driveEmail) {
         isGdriveTokenValid().then(valid => setDriveTokenExpired(!valid)).catch(() => {});
-        // Auto-sync jika sudah > 4 jam sejak sync terakhir
+        // Auto-sync jika sudah > 4 jam sejak sync terakhir (pakai ref agar selalu versi terbaru)
         SecureStore.getItemAsync(GDRIVE_LAST_BACKUP_KEY).then(last => {
           if (!last || Date.now() - parseInt(last) > AUTO_SYNC_INTERVAL) {
-            handleSyncDrive(true); // silent mode — tanpa Alert
+            syncDriveRef.current?.(true);
           }
         }).catch(() => {});
       }
@@ -499,15 +505,23 @@ export default function App() {
       let backup;
       try { backup = JSON.parse(text); } catch(e) { throw new Error('Format backup di Drive tidak valid'); }
       const driveT = (backup.data?.transactions || []).filter(t => !t.deletedAt);
-      const localT = (data?.transactions  || []).filter(t => !t.deletedAt);
+      // Baca transaksi lokal langsung dari DB — hindari stale closure dari state
+      const localRows = await dbRef.current.getAllAsync(
+        'SELECT bon_number, transaction_date, customer_norm, amount FROM transactions WHERE deleted_at IS NULL'
+      );
+      const localT = localRows;
       // Cari transaksi di Drive yang belum ada di lokal
       const newFromDrive = driveT.filter(dt => {
         const dtDate = dt.date || dt.transaction_date || '';
         const dtCust = getNorm(dt.customerName || dt.customer_name || '');
         const dtBon  = dt.bonNumber || dt.bon_number || '';
+        const dtAmt  = dt.amount || 0;
+        // localT berisi raw DB rows: bon_number, transaction_date, customer_norm, amount
         return !localT.some(lt =>
-          lt.bonNumber === dtBon && lt.date === dtDate &&
-          getNorm(lt.customerName) === dtCust && lt.amount === dt.amount
+          lt.bon_number === dtBon &&
+          lt.transaction_date === dtDate &&
+          lt.customer_norm === dtCust &&
+          lt.amount === dtAmt
         );
       });
       let synced = 0;

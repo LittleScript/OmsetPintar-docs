@@ -27,24 +27,27 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
   const [dbLoading, setDbLoading] = useState(false);
   const loadingRef = useRef(false);
 
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+
   const loadPage = useCallback(async (page, reset = false) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
-    setDbLoading(true);
+    if (mountedRef.current) setDbLoading(true);
     try {
       const db   = await getDb();
       const rows = await loadTransactionsPaged(db, { page, pageSize: PAGE_SIZE, salesFilter: salesF, search });
+      if (!mountedRef.current) return; // komponen sudah unmount
       if (reset) {
         setDbItems(rows);
         const cnt = await countTransactionsPaged(db, { salesFilter: salesF, search });
-        setDbTotal(cnt);
-        setDbPage(1);
+        if (mountedRef.current) { setDbTotal(cnt); setDbPage(1); }
       } else {
         setDbItems(prev => [...prev, ...rows]);
-        setDbPage(page);
+        if (mountedRef.current) setDbPage(page);
       }
     } finally {
-      setDbLoading(false);
+      if (mountedRef.current) setDbLoading(false);
       loadingRef.current = false;
     }
   }, [salesF, search]);

@@ -154,5 +154,4 @@ TaskManager.defineTask(GDRIVE_TASK_NAME, async () => {
   }
 });
 
-// Panggil WebBrowser.maybeCompleteAuthSession() di App.js setelah import services
-export { WebBrowser };
+// WebBrowser.maybeCompleteAuthSession() dipanggil di App.js langsung

@@ -9,6 +9,18 @@ import { toIdr, toShort, todayStr, fmtDate, getWeekBounds } from '../utils';
 let captureRef = null;
 try { captureRef = require('react-native-view-shot').captureRef; } catch(_) {}
 
+// PctTag di luar component agar identity stabil (tidak remount setiap render parent)
+function PctTag({ pct, C }) {
+  if (pct === null || pct === undefined) return null;
+  const abs = Math.abs(pct), flat = abs < 0.5;
+  const col = flat ? C.muted : pct > 0 ? C.success : C.danger;
+  return (
+    <Text style={{ color:col, fontSize:10, fontWeight:'700', marginTop:1 }}>
+      {flat ? '→ 0%' : (pct > 0 ? '↑ ' : '↓ ') + abs.toFixed(1) + '%'}
+    </Text>
+  );
+}
+
 function DashboardScreen({ data, onYearChange }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
@@ -63,18 +75,6 @@ function DashboardScreen({ data, onYearChange }) {
   // Hitung % perubahan — null jika periode lalu kosong (belum ada data)
   const dayPct  = yesterdayTotal > 0 ? (todayTotal  - yesterdayTotal) / yesterdayTotal * 100 : null;
   const weekPct = lastWeekTotal  > 0 ? (weekTotal   - lastWeekTotal)  / lastWeekTotal  * 100 : null;
-
-  // Badge persentase kecil (↑ hijau / ↓ merah / → abu)
-  const PctTag = ({ pct }) => {
-    if (pct === null) return null;
-    const abs = Math.abs(pct), flat = abs < 0.5;
-    const col = flat ? C.muted : pct > 0 ? C.success : C.danger;
-    return (
-      <Text style={{ color:col, fontSize:10, fontWeight:'700', marginTop:1 }}>
-        {flat ? '→ 0%' : (pct > 0 ? '↑ ' : '↓ ') + abs.toFixed(1) + '%'}
-      </Text>
-    );
-  };
 
   const bySales = salesList.map((s,i) => {
     const sTx = yearTxns.filter(t => t.sales===s);
@@ -205,7 +205,7 @@ function DashboardScreen({ data, onYearChange }) {
               {toIdr(todayTotal)}
             </Text>
             <Text style={{ color:C.muted, fontSize:12 }}>{todayTxns.length} bon</Text>
-            <PctTag pct={dayPct} />
+            <PctTag pct={dayPct} C={C} />
             {dayPct !== null && (
               <Text style={{ color:C.muted, fontSize:9 }}>vs kemarin</Text>
             )}
@@ -216,7 +216,7 @@ function DashboardScreen({ data, onYearChange }) {
               {toShort(weekTotal)}
             </Text>
             <Text style={{ color:C.muted, fontSize:12 }}>{weekTxns.length} bon</Text>
-            <PctTag pct={weekPct} />
+            <PctTag pct={weekPct} C={C} />
             {weekPct !== null && (
               <Text style={{ color:C.muted, fontSize:9 }}>vs minggu lalu</Text>
             )}
