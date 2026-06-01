@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.2.2';
+const APP_VER    = '4.2.3';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -3502,7 +3502,11 @@ export default function App() {
   const [driveSyncing,     setDriveSyncing]     = useState(false);
   const [driveTokenExpired,setDriveTokenExpired]= useState(false);
 
+  // expo-auth-session v6: Google.useAuthRequest di Android WAJIB ada androidClientId
+  // atau clientId sebagai fallback — tanpanya invariantClientId() throw saat render
+  // → app crash sebelum UI muncul. Pakai webClientId sekalian sebagai clientId.
   const [gRequest, gResponse, gPromptAsync] = Google.useAuthRequest({
+    clientId:    GOOGLE_WEB_CLIENT_ID, // fallback universal → cegah invariantClientId throw
     webClientId: GOOGLE_WEB_CLIENT_ID,
     scopes: ['https://www.googleapis.com/auth/drive.file', 'email', 'profile'],
     redirectUri: AuthSession.makeRedirectUri({ useProxy: true }),
