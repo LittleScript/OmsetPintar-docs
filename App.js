@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.4.3';
+const APP_VER    = '4.5.0';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -1337,6 +1337,13 @@ function DashboardScreen({ data, onYearChange }) {
   const { salesList, transactions, activeYear, dateFormat } = data;
   const [busyMonthFilter,  setBusyMonthFilter]  = useState(0);
   const [showShareModal,   setShowShareModal]    = useState(false);
+  const [shareType,        setShareType]         = useState('hari');
+  const [shareDay,         setShareDay]          = useState(() => todayStr());
+  const [shareWeekRef,     setShareWeekRef]      = useState(() => todayStr());
+  const [shareMonthY,      setShareMonthY]       = useState(() => new Date().getFullYear());
+  const [shareMonthM,      setShareMonthM]       = useState(() => new Date().getMonth()+1);
+  const [shareYearVal,     setShareYearVal]      = useState(activeYear);
+  const [showShareDatePicker, setShowShareDatePicker] = useState(false);
 
   const DAY_NAMES_ID = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
 
@@ -1383,28 +1390,35 @@ function DashboardScreen({ data, onYearChange }) {
   });
   const busyMax = busyDays.reduce((mx, d) => Math.max(mx, d.total), 0);
 
-  // ── Share rekap dengan pilihan periode ──────────────────────────────────────
-  const handleShare = async (period) => {
-    const activeTxns = transactions.filter(t => !t.deletedAt);
-    const now        = new Date();
-    let txns, header, sub;
+  // ── Share rekap dengan pilihan periode bebas ────────────────────────────────
+  const shareWeekBounds = useMemo(() => getWeekBounds(shareWeekRef), [shareWeekRef]);
 
-    if (period === 'today') {
-      txns   = activeTxns.filter(t => t.date === today);
-      header = 'Rekap Omset Hari Ini';
-      sub    = `${DAY_NAMES_ID[new Date(today+'T12:00:00').getDay()]}, ${fmtDate(today, dateFormat)}`;
-    } else if (period === 'week') {
-      txns   = activeTxns.filter(t => t.date >= mon && t.date <= sun);
-      header = 'Rekap Omset Minggu Ini';
-      sub    = `${fmtDate(mon, dateFormat)} – ${fmtDate(sun, dateFormat)}`;
+  const sharePreview = useMemo(() => {
+    const active = transactions.filter(t => !t.deletedAt);
+    let txns, header, sub;
+    if (shareType === 'hari') {
+      txns   = active.filter(t => t.date === shareDay);
+      header = 'Rekap Omset';
+      sub    = `${DAY_NAMES_ID[new Date(shareDay+'T12:00:00').getDay()]}, ${fmtDate(shareDay, dateFormat)}`;
+    } else if (shareType === 'minggu') {
+      txns   = active.filter(t => t.date >= shareWeekBounds.mon && t.date <= shareWeekBounds.sun);
+      header = 'Rekap Omset Minggu';
+      sub    = `${fmtDate(shareWeekBounds.mon, dateFormat)} – ${fmtDate(shareWeekBounds.sun, dateFormat)}`;
+    } else if (shareType === 'bulan') {
+      const ym = `${shareMonthY}-${String(shareMonthM).padStart(2,'0')}`;
+      txns   = active.filter(t => t.date.startsWith(ym));
+      header = `Rekap Omset ${MONTHS_F[shareMonthM-1]} ${shareMonthY}`;
+      sub    = null;
     } else {
-      const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-      txns   = activeTxns.filter(t => t.date.startsWith(ym));
-      header = `Rekap Omset ${MONTHS_F[now.getMonth()]} ${now.getFullYear()}`;
+      txns   = active.filter(t => t.date.startsWith(String(shareYearVal)));
+      header = `Rekap Omset Tahun ${shareYearVal}`;
       sub    = null;
     }
+    return { txns, total: txns.reduce((a,t) => a+t.amount, 0), header, sub };
+  }, [shareType, shareDay, shareWeekBounds, shareMonthY, shareMonthM, shareYearVal, transactions, dateFormat]);
 
-    const total = txns.reduce((a,t) => a+t.amount, 0);
+  const handleShareExecute = async () => {
+    const { txns, total, header, sub } = sharePreview;
     const lines = [
       `📊 *${header}*`,
       `🏪 ${data.companyName || 'Toko'}${sub ? '  |  ' + sub : ''}`,
@@ -1634,59 +1648,161 @@ function DashboardScreen({ data, onYearChange }) {
 
       {/* ── Share Rekap Modal ── */}
       {showShareModal && (
-        <Modal visible animationType="slide" transparent onRequestClose={() => setShowShareModal(false)}>
-          <TouchableOpacity style={{ flex:1, backgroundColor:'rgba(0,0,0,0.55)' }}
-            onPress={() => setShowShareModal(false)} activeOpacity={1}>
-            <View style={{ position:'absolute', bottom:0, left:0, right:0,
-              backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24,
-              padding:20, paddingBottom:36 }}>
-              <Text style={{ color:C.text, fontSize:17, fontWeight:'800', marginBottom:4 }}>
-                📤 Bagikan Rekap Omset
-              </Text>
-              <Text style={{ color:C.muted, fontSize:12, marginBottom:16 }}>
-                Pilih periode yang mau dibagikan
-              </Text>
-              {[
-                { id:'today', icon:'📅', label:'Hari Ini',
-                  sub: `${DAY_NAMES_ID[new Date(today+'T12:00:00').getDay()]}, ${fmtDate(today, dateFormat)}`,
-                  count: todayTxns.length, total: todayTotal },
-                { id:'week',  icon:'📆', label:'Minggu Ini',
-                  sub: `${fmtDate(mon, dateFormat)} – ${fmtDate(sun, dateFormat)}`,
-                  count: weekTxns.length,  total: weekTotal },
-                { id:'month', icon:'🗓', label:`Bulan ${MONTHS_F[new Date().getMonth()]}`,
-                  sub: String(new Date().getFullYear()),
-                  count: activeTxns.filter(t => t.date.startsWith(
-                    `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`
-                  )).length,
-                  total: activeTxns.filter(t => t.date.startsWith(
-                    `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`
-                  )).reduce((a,t)=>a+t.amount,0) },
-              ].map(opt => (
-                <TouchableOpacity key={opt.id}
-                  onPress={() => { setShowShareModal(false); handleShare(opt.id); }}
-                  style={{ flexDirection:'row', alignItems:'center', paddingVertical:14,
-                    borderBottomWidth:1, borderBottomColor:C.border, gap:12 }}>
-                  <Text style={{ fontSize:22 }}>{opt.icon}</Text>
-                  <View style={{ flex:1 }}>
-                    <Text style={{ color:C.text, fontSize:15, fontWeight:'700' }}>{opt.label}</Text>
-                    <Text style={{ color:C.muted, fontSize:11, marginTop:1 }}>{opt.sub}</Text>
-                  </View>
-                  <View style={{ alignItems:'flex-end' }}>
-                    <Text style={[{ color:C.accent, fontSize:13, fontWeight:'800' }]}>
-                      {toShort(opt.total)}
-                    </Text>
-                    <Text style={{ color:C.muted, fontSize:10 }}>{opt.count} bon</Text>
-                  </View>
-                  <Text style={{ color:C.muted, fontSize:18 }}>›</Text>
-                </TouchableOpacity>
-              ))}
+        <Modal visible animationType="slide" onRequestClose={() => setShowShareModal(false)}>
+          <View style={[st.container, { paddingTop: Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
+            {/* Header */}
+            <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center',
+              paddingHorizontal:16, paddingVertical:12, borderBottomWidth:1, borderBottomColor:C.border }}>
+              <Text style={{ color:C.text, fontSize:17, fontWeight:'800' }}>📤 Bagikan Rekap</Text>
               <TouchableOpacity onPress={() => setShowShareModal(false)}
-                style={{ marginTop:14, backgroundColor:C.input, borderRadius:12,
-                  padding:12, alignItems:'center' }}>
-                <Text style={{ color:C.muted, fontWeight:'700' }}>Batal</Text>
+                style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:12, paddingVertical:6 }}>
+                <Text style={{ color:C.muted }}>✕ Tutup</Text>
               </TouchableOpacity>
             </View>
-          </TouchableOpacity>
+
+            <ScrollView contentContainerStyle={{ padding:16, paddingBottom:40 }}>
+              {/* Tab selector */}
+              <View style={{ flexDirection:'row', gap:6, marginBottom:16 }}>
+                {[['hari','Hari'],['minggu','Minggu'],['bulan','Bulan'],['tahun','Tahun']].map(([v,l]) => (
+                  <TouchableOpacity key={v} onPress={() => setShareType(v)}
+                    style={{ flex:1, paddingVertical:9, borderRadius:10, alignItems:'center',
+                      backgroundColor: shareType===v ? C.primary : C.input }}>
+                    <Text style={{ color: shareType===v ? '#fff' : C.muted, fontSize:12, fontWeight:'700' }}>{l}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Navigator per tipe */}
+              <View style={[st.card, { flexDirection:'row', alignItems:'center',
+                justifyContent:'space-between', marginBottom:16, paddingVertical:18 }]}>
+                {shareType === 'hari' && (<>
+                  <TouchableOpacity onPress={() => {
+                    const d = new Date(shareDay+'T12:00:00'); d.setDate(d.getDate()-1);
+                    setShareDay(d.toISOString().slice(0,10));
+                  }} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>‹</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setShowShareDatePicker(true)} style={{ alignItems:'center' }}>
+                    <Text style={{ color:C.accent, fontSize:16, fontWeight:'800' }}>
+                      {DAY_NAMES_ID[new Date(shareDay+'T12:00:00').getDay()]}
+                    </Text>
+                    <Text style={{ color:C.text, fontSize:15, fontWeight:'700', marginTop:2 }}>
+                      {fmtDate(shareDay, dateFormat)}
+                    </Text>
+                    <Text style={{ color:C.muted, fontSize:10, marginTop:3 }}>tap untuk pilih tanggal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => {
+                    const d = new Date(shareDay+'T12:00:00'); d.setDate(d.getDate()+1);
+                    setShareDay(d.toISOString().slice(0,10));
+                  }} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>›</Text>
+                  </TouchableOpacity>
+                </>)}
+                {shareType === 'minggu' && (<>
+                  <TouchableOpacity onPress={() => {
+                    const d = new Date(shareWeekRef+'T12:00:00'); d.setDate(d.getDate()-7);
+                    setShareWeekRef(d.toISOString().slice(0,10));
+                  }} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>‹</Text>
+                  </TouchableOpacity>
+                  <View style={{ alignItems:'center' }}>
+                    <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
+                      {fmtDate(shareWeekBounds.mon, dateFormat)}
+                    </Text>
+                    <Text style={{ color:C.muted, fontSize:11, marginVertical:2 }}>sampai</Text>
+                    <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
+                      {fmtDate(shareWeekBounds.sun, dateFormat)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => {
+                    const d = new Date(shareWeekRef+'T12:00:00'); d.setDate(d.getDate()+7);
+                    setShareWeekRef(d.toISOString().slice(0,10));
+                  }} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>›</Text>
+                  </TouchableOpacity>
+                </>)}
+                {shareType === 'bulan' && (<>
+                  <TouchableOpacity onPress={() => {
+                    let m = shareMonthM-1, y = shareMonthY;
+                    if (m < 1) { m=12; y--; }
+                    setShareMonthM(m); setShareMonthY(y);
+                  }} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>‹</Text>
+                  </TouchableOpacity>
+                  <View style={{ alignItems:'center' }}>
+                    <Text style={{ color:C.accent, fontSize:18, fontWeight:'800' }}>{MONTHS_F[shareMonthM-1]}</Text>
+                    <Text style={{ color:C.text, fontSize:14, fontWeight:'700', marginTop:2 }}>{shareMonthY}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => {
+                    let m = shareMonthM+1, y = shareMonthY;
+                    if (m > 12) { m=1; y++; }
+                    setShareMonthM(m); setShareMonthY(y);
+                  }} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>›</Text>
+                  </TouchableOpacity>
+                </>)}
+                {shareType === 'tahun' && (<>
+                  <TouchableOpacity onPress={() => setShareYearVal(v => v-1)} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>‹</Text>
+                  </TouchableOpacity>
+                  <Text style={[st.mono, { color:C.accent, fontSize:32, fontWeight:'800' }]}>{shareYearVal}</Text>
+                  <TouchableOpacity onPress={() => setShareYearVal(v => v+1)} style={{ padding:10 }}>
+                    <Text style={{ color:C.text, fontSize:24, fontWeight:'700' }}>›</Text>
+                  </TouchableOpacity>
+                </>)}
+              </View>
+
+              {/* Preview transaksi */}
+              <View style={[st.card, { marginBottom:20, borderLeftWidth:3, borderLeftColor:C.accent }]}>
+                <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                  <Text style={[st.mono, { color:C.accent, fontSize:22, fontWeight:'800' }]}>
+                    {toIdr(sharePreview.total)}
+                  </Text>
+                  <Text style={{ color:C.muted, fontSize:13 }}>{sharePreview.txns.length} bon</Text>
+                </View>
+                {sharePreview.txns.length > 0
+                  ? salesList.map(s => {
+                      const sTx = sharePreview.txns.filter(t => t.sales === s);
+                      if (!sTx.length) return null;
+                      return (
+                        <Text key={s} style={{ color:C.muted, fontSize:12, marginTop:3 }}>
+                          • {s}: {toIdr(sTx.reduce((a,t)=>a+t.amount,0))} ({sTx.length} bon)
+                        </Text>
+                      );
+                    })
+                  : <Text style={{ color:C.muted, fontSize:12, fontStyle:'italic' }}>Tidak ada transaksi di periode ini</Text>
+                }
+              </View>
+
+              {/* Tombol share */}
+              <TouchableOpacity onPress={handleShareExecute}
+                disabled={sharePreview.txns.length === 0}
+                style={[btnStyle(sharePreview.txns.length > 0 ? C.primary : C.input),
+                  sharePreview.txns.length === 0 && { opacity:0.4 }]}>
+                <Text style={{ color: sharePreview.txns.length > 0 ? '#fff' : C.muted,
+                  fontSize:16, fontWeight:'800' }}>
+                  📤  Bagikan Rekap
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {showShareDatePicker && (
+              <DateTimePicker
+                value={new Date(shareDay+'T12:00:00')}
+                mode="date"
+                display={Platform.OS==='android'?'calendar':'default'}
+                onChange={(event, selectedDate) => {
+                  setShowShareDatePicker(false);
+                  if (selectedDate) {
+                    const y = selectedDate.getFullYear();
+                    const m = String(selectedDate.getMonth()+1).padStart(2,'0');
+                    const d = String(selectedDate.getDate()).padStart(2,'0');
+                    setShareDay(`${y}-${m}-${d}`);
+                  }
+                }}
+              />
+            )}
+          </View>
         </Modal>
       )}
     </View>
@@ -2170,7 +2286,7 @@ function RankingScreen({ data }) {
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
 function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   driveEmail, driveLastSync, driveSyncing, driveTokenExpired,
-  onDriveConnect, onDriveBackup, onDriveDisconnect }) {
+  onDriveConnect, onDriveBackup, onDriveDisconnect, onDriveSync }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
 
@@ -2847,21 +2963,35 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   <View style={{ width:10, height:10, borderRadius:5,
                     backgroundColor: driveTokenExpired ? C.warning : C.success }} />
                 </View>
-                <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
+                {/* Backup / Sinkron / Restore — tiga tombol sejajar */}
+                <View style={{ flexDirection:'row', gap:6, marginBottom:10 }}>
                   <TouchableOpacity onPress={onDriveBackup} disabled={driveSyncing}
                     style={{ flex:1, backgroundColor:C.success+'22', borderWidth:1.5, borderColor:C.success,
-                      borderRadius:14, paddingVertical:13, alignItems:'center',
-                      opacity: driveSyncing ? 0.6 : 1 }}>
-                    <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>
-                      {driveSyncing ? '⏳ Upload...' : '☁️ Backup'}
+                      borderRadius:12, paddingVertical:12, alignItems:'center',
+                      opacity: driveSyncing ? 0.5 : 1 }}>
+                    <Text style={{ color:C.success, fontSize:11, fontWeight:'800' }}>
+                      {driveSyncing ? '⏳' : '☁️'}
                     </Text>
+                    <Text style={{ color:C.success, fontSize:10, fontWeight:'700', marginTop:2 }}>
+                      {driveSyncing ? 'Upload...' : 'Backup'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={onDriveSync} disabled={driveSyncing}
+                    style={{ flex:1, backgroundColor:C.accent+'22', borderWidth:1.5, borderColor:C.accent,
+                      borderRadius:12, paddingVertical:12, alignItems:'center',
+                      opacity: driveSyncing ? 0.5 : 1 }}>
+                    <Text style={{ color:C.accent, fontSize:11, fontWeight:'800' }}>🔄</Text>
+                    <Text style={{ color:C.accent, fontSize:10, fontWeight:'700', marginTop:2 }}>Sinkron</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={handleListDriveFiles} disabled={driveFilesLoading}
                     style={{ flex:1, backgroundColor:C.primary+'22', borderWidth:1.5, borderColor:C.primary,
-                      borderRadius:14, paddingVertical:13, alignItems:'center',
-                      opacity: driveFilesLoading ? 0.6 : 1 }}>
-                    <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>
-                      {driveFilesLoading ? '⏳ Memuat...' : '☁️ Restore'}
+                      borderRadius:12, paddingVertical:12, alignItems:'center',
+                      opacity: driveFilesLoading ? 0.5 : 1 }}>
+                    <Text style={{ color:C.primary, fontSize:11, fontWeight:'800' }}>
+                      {driveFilesLoading ? '⏳' : '📥'}
+                    </Text>
+                    <Text style={{ color:C.primary, fontSize:10, fontWeight:'700', marginTop:2 }}>
+                      {driveFilesLoading ? 'Memuat...' : 'Restore'}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -2917,7 +3047,24 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             )}
           </View>
 
-          {/* Data actions */}
+          {/* ── LAPORAN ── */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:4 }}>
+              LAPORAN
+            </Text>
+            <Text style={{ color:C.muted, fontSize:11, marginBottom:12 }}>
+              Generate laporan Excel profesional siap cetak
+            </Text>
+            <TouchableOpacity onPress={() => setShowExcelMenu(true)}
+              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:16, alignItems:'center' }}>
+              <Text style={{ color:C.success, fontSize:15, fontWeight:'800' }}>📊  Export ke Excel (.xlsx)</Text>
+              <Text style={{ color:C.success, fontSize:10, marginTop:3, opacity:0.8 }}>
+                Ringkasan · Per Sales · Bulanan · Pelanggan · Ranking
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* ── DATA ── */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
               DATA
@@ -2933,15 +3080,11 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
               <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>🔄  Restore dari Backup JSON</Text>
             </TouchableOpacity>
 
-            {/* ── Export ── */}
-            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>EXPORT</Text>
+            {/* ── Export / Backup ── */}
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>EXPORT & BACKUP</Text>
             <TouchableOpacity onPress={handleExportCsv}
               style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8 }}>
               <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>📤  Export ke CSV (Google Sheets)</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowExcelMenu(true)}
-              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8 }}>
-              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>📊  Export ke Excel (.xlsx)</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={handleExport}
               style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:12 }}>
@@ -4191,6 +4334,96 @@ export default function App() {
     await reloadData();
   }, [reloadData]);
 
+  // Google Drive Sync — merge dua arah untuk multi-device
+  const handleSyncDrive = useCallback(async () => {
+    const valid = await isGdriveTokenValid();
+    if (!valid) {
+      Alert.alert('⚠️ Sesi Expired', 'Token Google Drive sudah expired.\nReconnect dulu di Settings → Google Drive.');
+      return;
+    }
+    setDriveSyncing(true);
+    try {
+      const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
+      // Cari folder backup
+      const qF = encodeURIComponent(`name='OmsetKu Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+      const folderRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${qF}&fields=files(id)`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const folderData = await folderRes.json();
+      const folderId   = folderData.files?.[0]?.id;
+      const doUpload   = async () => {
+        const fresh = await assembleData(dbRef.current);
+        await uploadToDrive(token, { schemaVersion: SCHEMA_VER, appVersion: APP_VER, exportedAt: new Date().toISOString(), data: fresh });
+        await SecureStore.setItemAsync(GDRIVE_LAST_BACKUP_KEY, String(Date.now()));
+        const ts = new Date().toLocaleDateString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+        setDriveLastSync(ts);
+      };
+      if (!folderId) { await doUpload(); Alert.alert('✅ Sinkron', 'Tidak ada data di Drive, data lokal berhasil diunggah.'); return; }
+      // Download file terbaru
+      const qFiles = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+      const filesRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${qFiles}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=1`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const filesData = await filesRes.json();
+      const latestFile = filesData.files?.[0];
+      if (!latestFile) { await doUpload(); Alert.alert('✅ Sinkron', 'Data lokal berhasil diunggah ke Drive.'); return; }
+      const fileRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${latestFile.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const text = await fileRes.text();
+      let backup;
+      try { backup = JSON.parse(text); } catch(e) { throw new Error('Format backup di Drive tidak valid'); }
+      const driveT = (backup.data?.transactions || []).filter(t => !t.deletedAt);
+      const localT = (data?.transactions  || []).filter(t => !t.deletedAt);
+      // Cari transaksi di Drive yang belum ada di lokal
+      const newFromDrive = driveT.filter(dt => {
+        const dtDate = dt.date || dt.transaction_date || '';
+        const dtCust = getNorm(dt.customerName || dt.customer_name || '');
+        const dtBon  = dt.bonNumber || dt.bon_number || '';
+        return !localT.some(lt =>
+          lt.bonNumber === dtBon && lt.date === dtDate &&
+          getNorm(lt.customerName) === dtCust && lt.amount === dt.amount
+        );
+      });
+      let synced = 0;
+      if (newFromDrive.length > 0) {
+        const db  = dbRef.current;
+        const now = new Date().toISOString();
+        const driveSales = backup.data?.salesList || [];
+        const curSales   = [...(data?.salesList || [])];
+        for (const s of driveSales) {
+          if (!curSales.includes(s)) { await addSales(db, s, null, curSales.length); curSales.push(s); }
+        }
+        for (const t of newFromDrive) {
+          const date = t.date || t.transaction_date || '', cn = (t.customerName || t.customer_name || '').trim();
+          const bn = t.bonNumber || t.bon_number || '', bs = t.bonSeq || t.bon_seq || 0;
+          const sn = t.sales || t.sales_name || '', amt = t.amount || 0, nt = t.notes || '';
+          if (!date || !cn || !sn || amt <= 0) continue;
+          const yr = parseInt(date.slice(0,4),10), ym2 = date.slice(0,7);
+          await db.runAsync(
+            `INSERT INTO transactions (bon_number,bon_seq,sales_name,customer_name,customer_norm,amount,transaction_date,year,year_month,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [bn,bs,sn,cn,getNorm(cn),amt,date,yr,ym2,nt,now,now]
+          );
+          synced++;
+        }
+        await reloadData();
+      }
+      await doUpload();
+      Alert.alert('✅ Sinkron Selesai',
+        synced > 0
+          ? `${synced} transaksi baru dari perangkat lain berhasil digabung.\nData gabungan telah diupload ke Drive.`
+          : 'Semua data sudah sinkron.\nTidak ada transaksi baru dari perangkat lain.'
+      );
+    } catch(e) {
+      Alert.alert('Sinkron Gagal', String(e));
+    } finally {
+      setDriveSyncing(false);
+    }
+  }, [data, reloadData]);
+
   const handleImportCsv = useCallback(async (rows) => {
     const db = dbRef.current;
     const now = new Date().toISOString();
@@ -4356,6 +4589,7 @@ export default function App() {
             gRequest && gPromptAsync();
           }}
           onDriveBackup={handleManualDriveBackup}
+          onDriveSync={handleSyncDrive}
           onDriveDisconnect={handleDisconnectDrive}
         />
       )}
