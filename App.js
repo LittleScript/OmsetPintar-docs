@@ -46,7 +46,7 @@ const LIGHT_THEME = {
   success:'#16a34a', warning:'#d97706', text:'#1e293b',
   muted:'#64748b', accent:'#ea580c', danger:'#dc2626',
 };
-const APP_VER    = '4.4.1';
+const APP_VER    = '4.4.2';
 const SCHEMA_VER = 1;
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
@@ -2844,8 +2844,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
               <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>📊  Export ke Excel (.xlsx)</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={handleExport}
-              style={{ backgroundColor:C.input, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:12 }}>
-              <Text style={{ color:C.text, fontSize:13, fontWeight:'700' }}>💾  Export Backup JSON</Text>
+              style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:12 }}>
+              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>💾  Export Backup JSON</Text>
             </TouchableOpacity>
 
             {/* ── Danger ── */}
