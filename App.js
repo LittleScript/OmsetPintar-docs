@@ -740,6 +740,19 @@ export default function App() {
           </Text>
           <Text style={{ color:statusColor, fontSize:10 }}>{statusText}</Text>
         </View>
+        {/* Toggle dark/light — sebelah ikon pengaturan */}
+        <TouchableOpacity
+          onPress={async () => {
+            const next = themeMode === 'dark' ? 'light' : 'dark';
+            setThemeMode(next);
+            await updateSettings(dbRef.current, { themeMode: next });
+          }}
+          style={{ backgroundColor:C.input, borderRadius:10, padding:8,
+            marginRight:8, borderWidth:1, borderColor:C.border }}>
+          <Text style={{ fontSize:16 }}>
+            {themeMode === 'dark' ? '☀️' : '🌙'}
+          </Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowSett(true)}
           style={{ backgroundColor:C.input, borderRadius:10, padding:8, borderWidth:1, borderColor:C.primary+'44' }}>
           <Text style={{ fontSize:15, color:C.text }}>⚙</Text>

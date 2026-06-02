@@ -10,7 +10,7 @@ import * as Notifications from 'expo-notifications';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { ThemeContext, getStyles, btnStyle } from '../theme';
 import { COLORS, MONTHS_F, APP_VER, SCHEMA_VER, GDRIVE_TOKEN_KEY, GDRIVE_HOUR_KEY, GDRIVE_TASK_NAME } from '../constants';
-import { toIdr, toShort, todayStr, fmtDate, getNorm, parseCsvText, padNum, parseBon } from '../utils';
+import { toIdr, toShort, todayStr, fmtDate, getNorm, parseCsvText, padNum, parseBon, getRanking } from '../utils';
 import { isGdriveTokenValid, scheduleReminder, cancelReminder } from '../services';
 import { PurchasesContext } from '../contexts';
 import { can, getMaxSales, FREE } from '../premium';
