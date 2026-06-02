@@ -6,13 +6,10 @@
 import React, { useContext } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, ScrollView,
-  Platform, StatusBar,
+  Platform,
 } from 'react-native';
 import { ThemeContext } from '../theme';
-import {
-  PRODUCTS, PAYWALL_MAP, PID, fmtPrice,
-  can,
-} from '../premium';
+import { PRODUCTS, PAYWALL_MAP, PID, fmtPrice } from '../premium';
 
 function ProductCard({ product, onBuy, highlight }) {
   const C = useContext(ThemeContext);

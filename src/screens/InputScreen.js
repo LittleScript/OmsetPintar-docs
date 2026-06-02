@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, useContext } 
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Platform, KeyboardAvoidingView } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { ThemeContext, getStyles, SalesChip, chipStyle } from '../theme';
+import { ThemeContext, getStyles, SalesChip, chipStyle, btnStyle } from '../theme';
 import { COLORS } from '../constants';
-import { todayStr, fmtDate, genBon, parseBon, getNorm, getAutocomplete } from '../utils';
+import { todayStr, fmtDate, genBon, parseBon, getNorm, getAutocomplete, toIdr } from '../utils';
 
 function InputScreen({ data, onSave, dirtyRef }) {
   const C = useContext(ThemeContext);

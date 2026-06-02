@@ -710,8 +710,14 @@ export default function App() {
   const statusColor = saveState==='saved' ? C.success
     : saveState==='error' ? C.danger : C.muted;
 
+  // Memoize context value — cegah re-render semua consumer setiap App render
+  const purchasesCtxValue = useMemo(
+    () => ({ purchases, openPaywall }),
+    [purchases, openPaywall]
+  );
+
   return (
-    <PurchasesContext.Provider value={{ purchases, openPaywall }}>
+    <PurchasesContext.Provider value={purchasesCtxValue}>
     <ThemeContext.Provider value={currentTheme}>
     <View style={[{flex:1, backgroundColor:currentTheme.bg}, { paddingTop:Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />

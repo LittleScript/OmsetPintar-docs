@@ -3,7 +3,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Alert, Platform, ScrollView, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
 import { ThemeContext, getStyles, SalesChip, chipStyle, btnStyle } from '../theme';
 import { COLORS } from '../constants';
-import { toIdr, fmtDate, genBon } from '../utils';
+import { toIdr, fmtDate, genBon, todayStr } from '../utils';
 import { getDb, loadTransactionsPaged, countTransactionsPaged } from '../db';
 
 // refreshSignal naik setiap kali App.js memanggil reloadData — trigger reload History
