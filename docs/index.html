@@ -32,8 +32,6 @@
          text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 14px; text-align: left; }
     td { color: #94a3b8; font-size: 14px; padding: 10px 14px;
          border-top: 1px solid #1e293b; }
-    .check { color: #22c55e; }
-    .cross { color: #ef4444; }
     footer { text-align: center; margin-top: 48px; color: #475569; font-size: 13px; }
     footer a { color: #60a5fa; text-decoration: none; }
     @media (max-width: 600px) { .container { padding: 24px 16px; } }
@@ -44,15 +42,15 @@
   <div class="header">
     <div class="logo">📊</div>
     <h1>Kebijakan Privasi OmsetKu</h1>
-    <p class="subtitle">Terakhir diperbarui: 1 Juni 2026</p>
-    <span class="badge">Versi 4.6.0+</span>
+    <p class="subtitle">Terakhir diperbarui: 2 Juni 2026</p>
+    <span class="badge">Versi 4.7.0+</span>
   </div>
 
   <div class="card">
     <h2>📌 Tentang OmsetKu</h2>
-    <p>OmsetKu adalah aplikasi pencatatan omset harian untuk UMKM Indonesia. Dirancang untuk membantu pemilik toko dan tim sales mencatat transaksi dengan mudah, cepat, dan aman.</p>
+    <p>OmsetKu adalah aplikasi pencatatan omset harian untuk UMKM Indonesia. Kami berkomitmen melindungi privasi pengguna dan data bisnis Anda.</p>
     <div class="highlight">
-      <p>✅ Semua data bisnis tersimpan lokal di HP Anda — tidak ada server OmsetKu yang menerima data Anda.</p>
+      <p>✅ Semua data tersimpan lokal di HP Anda — tidak ada server OmsetKu yang menerima data bisnis Anda.</p>
     </div>
   </div>
 
@@ -96,20 +94,17 @@
     <ul>
       <li>File backup diunggah ke folder "OmsetKu Backup" di <strong>Google Drive Anda sendiri</strong></li>
       <li>Sinkronisasi antar 2 HP menggunakan Drive sebagai perantara — bukan server OmsetKu</li>
-      <li>Koneksi menggunakan OAuth 2.0 + PKCE (standar keamanan tinggi, tanpa client secret)</li>
+      <li>Koneksi menggunakan OAuth 2.0 + PKCE (aman, tanpa client secret)</li>
       <li>Token diperbarui otomatis — tidak perlu login ulang berulang</li>
-      <li>Anda dapat mencabut izin kapan saja di: myaccount.google.com → Keamanan → Aplikasi pihak ketiga</li>
+      <li>Anda dapat mencabut izin kapan saja di: myaccount.google.com → Keamanan</li>
     </ul>
-    <div class="highlight">
-      <p>🔒 Kami tidak dapat mengakses Google Drive Anda tanpa izin eksplisit dari Anda.</p>
-    </div>
   </div>
 
   <div class="card">
     <h2>📂 Izin Aplikasi</h2>
     <table>
       <tr><th>Izin</th><th>Keperluan</th></tr>
-      <tr><td>USE_BIOMETRIC</td><td>Kunci app fingerprint — tidak menyimpan biometrik</td></tr>
+      <tr><td>USE_BIOMETRIC</td><td>Kunci app fingerprint + verifikasi reset data</td></tr>
       <tr><td>RECEIVE_BOOT_COMPLETED</td><td>Restart backup otomatis setelah HP restart</td></tr>
       <tr><td>INTERNET</td><td>Backup & sinkron Google Drive (opsional)</td></tr>
       <tr><td>POST_NOTIFICATIONS</td><td>Notifikasi pengingat harian (opsional)</td></tr>
@@ -119,24 +114,23 @@
   </div>
 
   <div class="card">
-    <h2>🗑️ Hak Pengguna</h2>
-    <p>Anda memiliki kendali penuh atas data Anda:</p>
-    <ul>
-      <li><strong>Hapus semua data:</strong> Settings → Reset Semua Data</li>
-      <li><strong>Export data:</strong> Settings → Laporan (Excel) atau Export Backup JSON</li>
-      <li><strong>Putus Drive:</strong> Settings → Backup Google Drive → Putus Koneksi</li>
-      <li><strong>Hapus total:</strong> Uninstall aplikasi menghapus seluruh data lokal</li>
-      <li><strong>Cabut akses Google:</strong> myaccount.google.com → Keamanan → Aplikasi pihak ketiga</li>
-    </ul>
-  </div>
-
-  <div class="card">
     <h2>🔒 Keamanan</h2>
     <ul>
       <li>Data lokal dilindungi enkripsi storage Android</li>
       <li>Token OAuth disimpan di Android SecureStore (terenkripsi)</li>
-      <li>Fitur kunci aplikasi fingerprint sebagai lapisan keamanan tambahan</li>
-      <li>Timeout kunci aplikasi dapat dikustomisasi (Langsung / 30 detik / 1 menit / 5 menit)</li>
+      <li>Kunci aplikasi fingerprint — lock otomatis saat app ditutup</li>
+      <li>Reset data memerlukan konfirmasi ganda + verifikasi fingerprint (jika aktif)</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🗑️ Hak Pengguna</h2>
+    <ul>
+      <li><strong>Hapus semua data:</strong> Settings → Reset Semua Data (konfirmasi ganda)</li>
+      <li><strong>Export data:</strong> Settings → Laporan (Excel) atau Export Backup JSON</li>
+      <li><strong>Putus Drive:</strong> Settings → Backup Google Drive → Putus Koneksi</li>
+      <li><strong>Hapus total:</strong> Uninstall aplikasi menghapus seluruh data lokal</li>
+      <li><strong>Cabut akses Google:</strong> myaccount.google.com → Keamanan → Aplikasi pihak ketiga</li>
     </ul>
   </div>
 
@@ -149,11 +143,9 @@
 
   <footer>
     <p>© 2026 OmsetKu · Dibuat untuk UMKM Indonesia</p>
-    <p style="margin-top:8px">Kebijakan ini berlaku mulai versi 4.6.0</p>
+    <p style="margin-top:8px">Kebijakan ini berlaku mulai versi 4.7.0</p>
     <p style="margin-top:8px">
-      <a href="https://littlescript.github.io/OmsetKu-docs/">
-        https://littlescript.github.io/OmsetKu-docs/
-      </a>
+      <a href="https://littlescript.github.io/OmsetKu-docs/">https://littlescript.github.io/OmsetKu-docs/</a>
     </p>
   </footer>
 </div>

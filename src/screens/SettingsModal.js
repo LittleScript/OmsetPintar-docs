@@ -29,7 +29,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   const { salesList, bonConfig, dateFormat, companyName } = data;
   const [themeMode, setThemeMode]       = useState(data.themeMode||'dark');
   const [pinLockEnabled, setPinLockEnabled] = useState(data.pinLockEnabled||false);
-  const [lockTimeout,    setLockTimeout]    = useState(data.lockTimeout ?? 30);
+  // lockTimeout dihapus dari UI — selalu lock langsung (lihat App.js)
   const [notifEnabled,   setNotifEnabled]   = useState(data.notifEnabled||false);
   const [notifHour,      setNotifHour]      = useState(data.notifHour??20);
   const [importPreview, setImportPreview] = useState(null);
