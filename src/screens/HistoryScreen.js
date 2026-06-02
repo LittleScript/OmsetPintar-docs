@@ -37,7 +37,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
     try {
       const db   = await getDb();
       const rows = await loadTransactionsPaged(db, { page, pageSize: PAGE_SIZE, salesFilter: salesF, search });
-      if (!mountedRef.current) return; // komponen sudah unmount
+      if (!mountedRef.current) return;
       if (reset) {
         setDbItems(rows);
         const cnt = await countTransactionsPaged(db, { salesFilter: salesF, search });
@@ -46,6 +46,9 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
         setDbItems(prev => [...prev, ...rows]);
         if (mountedRef.current) setDbPage(page);
       }
+    } catch(e) {
+      // DB error tidak crash app — tampilkan kosong
+      if (mountedRef.current && reset) { setDbItems([]); setDbTotal(0); }
     } finally {
       if (mountedRef.current) setDbLoading(false);
       loadingRef.current = false;
@@ -81,7 +84,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
   const saveEdit = async () => {
     const amt    = parseInt((editForm.amount||'').replace(/\D/g,''))||0;
     const bonSeq = parseInt(editForm.bonNumOnly, 10) || 1;
-    const bonNumber = genBon(bonSeq, data.bonConfig);
+    const bonNumber = genBon(bonSeq, data.bonConfig || { prefix:'INV', separator:'-', digitLength:5 });
     if (!editForm.customerName.trim() || amt<=0) {
       Alert.alert('','Nama dan nominal harus diisi'); return;
     }

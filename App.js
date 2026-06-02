@@ -113,17 +113,23 @@ export default function App() {
   }, []);
 
   // Load purchases on startup
-  useEffect(() => { loadPurchases().then(setPurchases); }, []);
+  useEffect(() => {
+    loadPurchases().then(setPurchases).catch(() => {}); // SecureStore error → fallback ke {}
+  }, []);
 
   const openPaywall   = useCallback((featureKey) => setPaywallKey(featureKey), []);
   const handlePurchase = useCallback(async (productId) => {
-    // TODO: integrate RevenueCat here
-    // Mock: simpan ke SecureStore
-    const updated = { ...purchases, [productId]: { purchasedAt: Date.now() } };
-    await savePurchases(updated);
-    setPurchases(updated);
-    setPaywallKey(null);
-    Alert.alert('✅ Berhasil', 'Fitur berhasil diaktifkan!');
+    try {
+      // TODO: integrate RevenueCat here
+      // Mock: simpan ke SecureStore
+      const updated = { ...purchases, [productId]: { purchasedAt: Date.now() } };
+      await savePurchases(updated);
+      setPurchases(updated);
+      setPaywallKey(null);
+      Alert.alert('✅ Berhasil', 'Fitur berhasil diaktifkan!');
+    } catch(e) {
+      Alert.alert('Error', 'Gagal menyimpan pembelian: ' + String(e));
+    }
   }, [purchases]);
 
   const reloadData = useCallback(async () => {

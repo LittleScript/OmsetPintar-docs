@@ -48,7 +48,7 @@ function DashboardScreen({ data, onYearChange }) {
   const DAY_NAMES_ID = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
 
   const activeTxns = useMemo(() =>
-    transactions.filter(t => !t.deletedAt), [transactions]);
+    (transactions || []).filter(t => !t.deletedAt), [transactions]);
 
   const today  = todayStr();
   const { mon, sun } = getWeekBounds(today);
@@ -123,7 +123,7 @@ function DashboardScreen({ data, onYearChange }) {
   const shareWeekBounds = useMemo(() => getWeekBounds(shareWeekRef), [shareWeekRef]);
 
   const sharePreview = useMemo(() => {
-    const active = transactions.filter(t => !t.deletedAt);
+    const active = (transactions || []).filter(t => !t.deletedAt);
     let txns, header, sub;
     if (shareType === 'hari') {
       txns   = active.filter(t => t.date === shareDay);

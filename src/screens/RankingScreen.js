@@ -22,7 +22,7 @@ function RankingScreen({ data }) {
   const [rankDate, setRankDate]       = useState(todayStr()); // untuk navigasi hari & minggu
 
   const activeTxns = useMemo(() =>
-    transactions.filter(t => !t.deletedAt), [transactions]);
+    (transactions || []).filter(t => !t.deletedAt), [transactions]);
 
   const ranked = useMemo(() => {
     let filtered;

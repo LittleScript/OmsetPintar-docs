@@ -250,10 +250,10 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
                     Pilih nama yang benar untuk mengganti semua transaksi.
                   </Text>
                 }
-                renderItem={({ item: pair }) => {
+                renderItem={({ item: pair, index: pairIdx }) => {
                     const salesColor = COLORS[salesList.indexOf(pair.sales) % COLORS.length] || C.primary;
                     return (
-                      <View key={idx} style={[st.card, { marginBottom:12 }]}>
+                      <View key={pairIdx} style={[st.card, { marginBottom:12 }]}>
                         <View style={{ flexDirection:'row', alignItems:'center', gap:6, marginBottom:12 }}>
                           <View style={{ width:8, height:8, borderRadius:4, backgroundColor:salesColor }} />
                           <Text style={{ color:salesColor, fontSize:11, fontWeight:'700' }}>{pair.sales}</Text>
