@@ -58,15 +58,19 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   const [fmt,     setFmt]       = useState(dateFormat||'dd/mm/yyyy');
   const [newSales, setNewSales] = useState('');
 
-  const save = async () => {
+  // Save individual sections inline
+  const saveCompany = async () => {
+    if (!company.trim()) { Alert.alert('', 'Nama bisnis tidak boleh kosong'); return; }
+    await onUpdate({ companyName: company.trim() });
+    Alert.alert('✓', 'Nama bisnis disimpan');
+  };
+  const saveBonFormat = async () => {
     await onUpdate({
-      companyName:   company.trim(),
-      bonPrefix:     prefix.toUpperCase(),
-      bonSeparator:  sep,
-      bonDigits:     Math.max(1, parseInt(digits)||5),
-      dateFormat:    fmt,
+      bonPrefix:    prefix.toUpperCase(),
+      bonSeparator: sep,
+      bonDigits:    Math.max(1, parseInt(digits)||5),
     });
-    onClose();
+    Alert.alert('✓', 'Format bon disimpan');
   };
 
   const handleAddSales = async () => {
@@ -604,11 +608,19 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         </View>
 
         <ScrollView contentContainerStyle={{ padding:16, paddingBottom:50 }}>
-          {/* Company */}
+          {/* Company — simpan inline */}
           <View style={st.card}>
             <Text style={st.label}>Nama Bisnis</Text>
-            <TextInput value={company} onChangeText={setCompany}
-              placeholder="Nama bisnis..." placeholderTextColor={C.muted} style={st.input} />
+            <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
+              <TextInput value={company} onChangeText={setCompany}
+                placeholder="Nama bisnis..." placeholderTextColor={C.muted}
+                style={[st.input, { flex:1 }]} />
+              <TouchableOpacity onPress={saveCompany}
+                style={{ backgroundColor:C.primary, borderRadius:10, paddingHorizontal:14,
+                  paddingVertical:14, alignItems:'center' }}>
+                <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>✓</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Sales management */}
@@ -659,23 +671,37 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   keyboardType="number-pad" style={st.input} placeholderTextColor={C.muted}/>
               </View>
             </View>
-            <Text style={[st.mono, { color:C.accent, fontSize:16, fontWeight:'800' }]}>
-              {prefix}{sep}{padNum(1, parseInt(digits)||5)}
-            </Text>
+            <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+              <Text style={[st.mono, { color:C.accent, fontSize:16, fontWeight:'800' }]}>
+                {prefix}{sep}{padNum(1, parseInt(digits)||5)}
+              </Text>
+              <TouchableOpacity onPress={saveBonFormat}
+                style={{ backgroundColor:C.primary, borderRadius:10, paddingHorizontal:16,
+                  paddingVertical:8 }}>
+                <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>✓ Simpan</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* Date format */}
+          {/* Date format — kompak, pilih langsung simpan */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
               FORMAT TANGGAL
             </Text>
-            {['dd/mm/yyyy','mm/dd/yyyy','yyyy/mm/dd'].map(f => (
-              <TouchableOpacity key={f} onPress={() => setFmt(f)}
-                style={{ flexDirection:'row', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
-                <Text style={{ color:C.text, fontSize:14 }}>{f.toUpperCase()}</Text>
-                {fmt===f && <Text style={{ color:C.success }}>✓</Text>}
-              </TouchableOpacity>
-            ))}
+            <View style={{ flexDirection:'row', gap:6 }}>
+              {['dd/mm/yyyy','mm/dd/yyyy','yyyy/mm/dd'].map(f => (
+                <TouchableOpacity key={f}
+                  onPress={async () => { setFmt(f); await onUpdate({ dateFormat: f }); }}
+                  style={{ flex:1, paddingVertical:10, borderRadius:10, alignItems:'center',
+                    backgroundColor: fmt===f ? C.primary : C.input,
+                    borderWidth: fmt===f ? 0 : 1, borderColor: C.border }}>
+                  <Text style={{ color: fmt===f ? '#fff' : C.muted, fontSize:10, fontWeight:'700' }}>
+                    {f.toUpperCase()}
+                  </Text>
+                  {fmt===f && <Text style={{ color:'rgba(255,255,255,0.7)', fontSize:8, marginTop:2 }}>✓ aktif</Text>}
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           {/* Google Drive Backup — locked jika belum beli BACKUP SYNC */}
@@ -891,11 +917,10 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                       cancelLabel:           'Batal',
                       disableDeviceFallback: false,
                     });
-                    if (!result.success) return; // batal — jangan aktifkan
+                    if (!result.success) return;
                     setPinLockEnabled(true);
-                    onUpdate({ pinLockEnabled: true });
-                    const tLabel = lockTimeout === 0 ? 'langsung' : lockTimeout < 60 ? `${lockTimeout} detik` : `${lockTimeout/60} menit`;
-                    Alert.alert('🔐 Kunci Aktif', `Aplikasi akan dikunci ${tLabel} setelah background.`);
+                    onUpdate({ pinLockEnabled: true, lockTimeout: 0 }); // selalu lock langsung
+                    Alert.alert('🔐 Kunci Aktif', 'Aplikasi akan dikunci otomatis saat ditutup.');
                   } else {
                     // ── NONAKTIFKAN: langsung disable ──
                     setPinLockEnabled(false);
@@ -909,32 +934,11 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   alignSelf: pinLockEnabled ? 'flex-end' : 'flex-start' }} />
               </TouchableOpacity>
             </View>
-            {/* Lock Timeout — hanya muncul jika kunci aktif */}
+            {/* Kunci langsung saat tutup app — seperti aplikasi bank */}
             {pinLockEnabled && (
-              <View style={{ marginTop:12 }}>
-                <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', marginBottom:8 }}>
-                  ⏱ KUNCI OTOMATIS SETELAH
-                </Text>
-                <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
-                  {[
-                    { val:0,   label:'Langsung' },
-                    { val:30,  label:'30 detik' },
-                    { val:60,  label:'1 menit'  },
-                    { val:300, label:'5 menit'  },
-                  ].map(opt => (
-                    <TouchableOpacity key={opt.val}
-                      onPress={() => { setLockTimeout(opt.val); onUpdate({ lockTimeout: opt.val }); }}
-                      style={{ paddingHorizontal:14, paddingVertical:8, borderRadius:10,
-                        backgroundColor: lockTimeout === opt.val ? C.primary : C.input,
-                        borderWidth:1, borderColor: lockTimeout === opt.val ? C.primary : C.border }}>
-                      <Text style={{ color: lockTimeout === opt.val ? '#fff' : C.muted,
-                        fontSize:12, fontWeight:'700' }}>
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+              <Text style={{ color:C.muted, fontSize:11, marginTop:8 }}>
+                🔒 Dikunci otomatis saat aplikasi ditutup
+              </Text>
             )}
           </View>
 
@@ -1027,12 +1031,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             ))}
           </View>
 
-          {/* Save */}
-          <TouchableOpacity onPress={save} style={[btnStyle(C.success), {marginTop:4}]}>
-            <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>✓  Simpan Pengaturan</Text>
-          </TouchableOpacity>
-
-          <Text style={{ color:C.muted, fontSize:11, textAlign:'center', marginTop:16 }}>
+          <Text style={{ color:C.muted, fontSize:11, textAlign:'center', marginTop:4 }}>
             OmsetKu v{APP_VER}
           </Text>
           <Text style={{ color:C.muted, fontSize:10, textAlign:'center', marginTop:4 }}>

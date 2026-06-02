@@ -41,11 +41,36 @@ function SetupWizard({ data, onComplete }) {
       <TextInput value={company} onChangeText={setCompany}
         placeholder="Toko Mainan Ceria" placeholderTextColor={C.muted} style={st.input} />
     </View>,
-    // Step 2: num sales
+    // Step 2: num sales — free tier max 2, tambah lebih di Settings nanti
     <View key={2}>
-      <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:8 }}>Jumlah Sales</Text>
-      <TextInput value={numS} onChangeText={v => setNumS(v.replace(/\D/g,''))}
-        keyboardType="number-pad" style={[st.input, {width:100}]} />
+      <Text style={{ color:C.text, fontSize:20, fontWeight:'800', marginBottom:6 }}>Jumlah Sales</Text>
+      <Text style={{ color:C.muted, fontSize:12, marginBottom:24 }}>
+        Bisa ditambah lagi nanti di Pengaturan
+      </Text>
+      <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'center', gap:32 }}>
+        <TouchableOpacity
+          onPress={() => setNumS(String(Math.max(1, parseInt(numS)||1) - 1))}
+          disabled={(parseInt(numS)||1) <= 1}
+          style={{ backgroundColor:C.input, borderRadius:12, width:52, height:52,
+            alignItems:'center', justifyContent:'center',
+            opacity: (parseInt(numS)||1) <= 1 ? 0.3 : 1 }}>
+          <Text style={{ color:C.text, fontSize:28, fontWeight:'700' }}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ alignItems:'center', minWidth:80 }}>
+          <Text style={{ color:C.accent, fontSize:56, fontWeight:'800', lineHeight:60 }}>
+            {numS || '1'}
+          </Text>
+          <Text style={{ color:C.muted, fontSize:13, marginTop:4 }}>sales</Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => setNumS(String(Math.min(2, parseInt(numS)||1) + 1))}
+          disabled={(parseInt(numS)||1) >= 2}
+          style={{ backgroundColor:C.input, borderRadius:12, width:52, height:52,
+            alignItems:'center', justifyContent:'center',
+            opacity: (parseInt(numS)||1) >= 2 ? 0.3 : 1 }}>
+          <Text style={{ color:C.text, fontSize:28, fontWeight:'700' }}>›</Text>
+        </TouchableOpacity>
+      </View>
     </View>,
     // Step 3: sales names
     <View key={3}>

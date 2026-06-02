@@ -193,7 +193,8 @@ export default function App() {
 
   // Re-cek token + auto-sync saat app kembali ke foreground
   // Gunakan ref untuk handleSyncDrive agar tidak ada stale closure
-  const syncDriveRef = useRef(null);
+  const syncDriveRef   = useRef(null);
+  const saveCountRef   = useRef(0); // counter untuk auto-sync setiap 10 input
   useEffect(() => { syncDriveRef.current = handleSyncDrive; });
 
   useEffect(() => {
@@ -333,23 +334,15 @@ export default function App() {
     }
   }, [dbReady, data]);
 
-  // Lock kembali sesuai timeout yang diset user (0=langsung, 30=30s, 60=1m, 300=5m)
+  // Lock langsung saat app masuk background — seperti aplikasi bank
   useEffect(() => {
-    const lockTimeout = data?.lockTimeout ?? 30; // detik
     const sub = AppState.addEventListener('change', nextState => {
-      if (nextState === 'background' || nextState === 'inactive') {
-        lastBackgroundTime.current = Date.now();
-        // lockTimeout=0: langsung kunci saat masuk background
-        if (lockTimeout === 0 && data?.pinLockEnabled) setIsLocked(true);
-      } else if (nextState === 'active') {
-        if (data?.pinLockEnabled && lockTimeout > 0 && lastBackgroundTime.current) {
-          if (Date.now() - lastBackgroundTime.current > lockTimeout * 1000) setIsLocked(true);
-        }
-        lastBackgroundTime.current = null;
+      if ((nextState === 'background' || nextState === 'inactive') && data?.pinLockEnabled) {
+        setIsLocked(true); // selalu lock langsung, tidak ada delay
       }
     });
     return () => sub.remove();
-  }, [data?.pinLockEnabled, data?.lockTimeout]);
+  }, [data?.pinLockEnabled]);
 
   const handleAuthenticate = useCallback(async () => {
     try {
@@ -441,6 +434,14 @@ export default function App() {
       await reloadData();
       setSaveState('saved');
       handleInAppReview(); // trigger review setelah bon ke-10
+      // Auto-sync GDrive setiap 10 input (jika Drive terhubung)
+      saveCountRef.current++;
+      if (saveCountRef.current >= 10) {
+        saveCountRef.current = 0;
+        SecureStore.getItemAsync(GDRIVE_EMAIL_KEY).then(email => {
+          if (email) syncDriveRef.current?.(true); // silent sync
+        }).catch(() => {});
+      }
     } catch(e) { setSaveState('error'); Alert.alert('Error', String(e)); }
     setTimeout(() => setSaveState('idle'), 2000);
   }, [reloadData, handleInAppReview]);
@@ -731,8 +732,8 @@ export default function App() {
 
       {/* Header */}
       <View style={{ flexDirection:'row', alignItems:'center', paddingHorizontal:16, paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
-        <Image source={require('./assets/icon.png')}
-          style={{ width:32, height:32, borderRadius:8, marginRight:10 }} />
+        <Image source={require('./assets/logo_header.png')}
+          style={{ width:34, height:34, marginRight:10 }} />
         <View style={{ flex:1 }}>
           <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
             {data.companyName || 'OmsetKu'}
