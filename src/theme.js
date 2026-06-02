@@ -9,7 +9,7 @@ export const ThemeContext = createContext(DARK_THEME);
 export const getStyles = (C) => ({
   flex1:     { flex: 1 },
   container: { flex:1, backgroundColor:C.bg },
-  scroll:    { paddingHorizontal:14, paddingBottom:110 },
+  scroll:    { paddingHorizontal:14, paddingTop:12, paddingBottom:110 },
   card:      { backgroundColor:C.card, borderRadius:16, borderWidth:1, borderColor:C.border, padding:16, marginBottom:12 },
   input:     { backgroundColor:C.input, borderWidth:1.5, borderColor:C.border, borderRadius:12, padding:14, color:C.text, fontSize:16 },
   label:     { color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:6 },

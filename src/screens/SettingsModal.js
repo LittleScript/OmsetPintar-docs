@@ -1069,7 +1069,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
               TAMPILAN
             </Text>
             <View style={{ flexDirection:'row', gap:6 }}>
-              {[['dark','🌙','Gelap'],['light','☀️','Terang'],['system','📱','Ikuti HP']].map(([val,icon,lbl]) => (
+              {[['dark','🌙','Mode Gelap'],['light','☀️','Mode Terang']].map(([val,icon,lbl]) => (
                 <TouchableOpacity key={val}
                   onPress={() => { setThemeMode(val); onUpdate({ themeMode: val }); }}
                   style={{ flex:1, paddingVertical:10, borderRadius:10, alignItems:'center', gap:3,
