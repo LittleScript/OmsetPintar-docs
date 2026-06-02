@@ -1063,29 +1063,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             )}
           </View>
 
-          {/* Theme — kompak 3 chip, klik langsung simpan */}
-          <View style={st.card}>
-            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
-              TAMPILAN
-            </Text>
-            <View style={{ flexDirection:'row', gap:6 }}>
-              {[['dark','🌙','Mode Gelap'],['light','☀️','Mode Terang']].map(([val,icon,lbl]) => (
-                <TouchableOpacity key={val}
-                  onPress={() => { setThemeMode(val); onUpdate({ themeMode: val }); }}
-                  style={{ flex:1, paddingVertical:10, borderRadius:10, alignItems:'center', gap:3,
-                    backgroundColor: themeMode===val ? C.primary : C.input,
-                    borderWidth: themeMode===val ? 0 : 1, borderColor: C.border }}>
-                  <Text style={{ fontSize:18 }}>{icon}</Text>
-                  <Text style={{ color: themeMode===val ? '#fff' : C.muted, fontSize:10, fontWeight:'700' }}>
-                    {lbl}
-                  </Text>
-                  {themeMode===val && <Text style={{ color:'rgba(255,255,255,0.7)', fontSize:8 }}>✓ aktif</Text>}
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Kelola Pembelian */}
+          {/* Kelola Pembelian — mode tampilan cukup via toggle di header */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
               PEMBELIAN & LANGGANAN
