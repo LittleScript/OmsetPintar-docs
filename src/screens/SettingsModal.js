@@ -1017,18 +1017,97 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             )}
           </View>
 
-          {/* Theme */}
+          {/* Theme — kompak 3 chip, klik langsung simpan */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
               TAMPILAN
             </Text>
-            {[['dark','🌙  Mode Gelap'],['light','☀️  Mode Terang'],['system','📱  Ikuti HP']].map(([val,lbl]) => (
-              <TouchableOpacity key={val} onPress={() => { setThemeMode(val); onUpdate({ themeMode: val }); }}
-                style={{ flexDirection:'row', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
-                <Text style={{ color:C.text, fontSize:14 }}>{lbl}</Text>
-                {themeMode===val && <Text style={{ color:C.success }}>✓</Text>}
-              </TouchableOpacity>
-            ))}
+            <View style={{ flexDirection:'row', gap:6 }}>
+              {[['dark','🌙','Gelap'],['light','☀️','Terang'],['system','📱','Ikuti HP']].map(([val,icon,lbl]) => (
+                <TouchableOpacity key={val}
+                  onPress={() => { setThemeMode(val); onUpdate({ themeMode: val }); }}
+                  style={{ flex:1, paddingVertical:10, borderRadius:10, alignItems:'center', gap:3,
+                    backgroundColor: themeMode===val ? C.primary : C.input,
+                    borderWidth: themeMode===val ? 0 : 1, borderColor: C.border }}>
+                  <Text style={{ fontSize:18 }}>{icon}</Text>
+                  <Text style={{ color: themeMode===val ? '#fff' : C.muted, fontSize:10, fontWeight:'700' }}>
+                    {lbl}
+                  </Text>
+                  {themeMode===val && <Text style={{ color:'rgba(255,255,255,0.7)', fontSize:8 }}>✓ aktif</Text>}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Kelola Pembelian */}
+          <View style={st.card}>
+            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
+              PEMBELIAN & LANGGANAN
+            </Text>
+
+            {/* Daftar yang sudah dibeli */}
+            {Object.keys(purchases).length > 0 ? (
+              <View style={{ marginBottom:12 }}>
+                <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:8 }}>AKTIF</Text>
+                {Object.entries(purchases).map(([id, info]) => {
+                  const labels = {
+                    omsetku_sales_unlock: '✓ Sales Unlock (3 sales)',
+                    omsetku_sales_pro: '✓ Sales Pro (10 sales)',
+                    omsetku_sales_ultimate: '✓ Sales Ultimate (unlimited)',
+                    omsetku_analytics_dashboard: '✓ Analitik Dashboard',
+                    omsetku_analytics_customers: '✓ Analitik Pelanggan',
+                    omsetku_analytics_export: '✓ Laporan & Ekspor',
+                    omsetku_analytics_all: '✓ Semua Analitik',
+                    omsetku_backup_sync: '✓ Backup & Sinkron',
+                    omsetku_monthly_plus: '✓ Monthly Plus (aktif)',
+                    omsetku_yearly_plus: '✓ Yearly Plus (aktif)',
+                  };
+                  return (
+                    <View key={id} style={{ flexDirection:'row', justifyContent:'space-between',
+                      paddingVertical:6, borderBottomWidth:1, borderBottomColor:C.border }}>
+                      <Text style={{ color:C.success, fontSize:13, fontWeight:'600' }}>
+                        {labels[id] || id}
+                      </Text>
+                      {info.purchasedAt && (
+                        <Text style={{ color:C.muted, fontSize:10 }}>
+                          {new Date(info.purchasedAt).toLocaleDateString('id-ID', { day:'numeric', month:'short' })}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={{ color:C.muted, fontSize:12, marginBottom:12, fontStyle:'italic' }}>
+                Belum ada pembelian aktif
+              </Text>
+            )}
+
+            {/* Tombol-tombol kelola */}
+            <TouchableOpacity
+              onPress={() => Alert.alert(
+                'Restore Pembelian',
+                'Fitur ini akan terhubung ke Google Play untuk memulihkan pembelian Anda sebelumnya.',
+                [{ text:'OK' }]
+              )}
+              style={{ backgroundColor:C.primary+'18', borderWidth:1, borderColor:C.primary,
+                borderRadius:12, paddingVertical:12, alignItems:'center', marginBottom:8 }}>
+              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>
+                🔄  Restore Pembelian
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => Alert.alert(
+                'Kelola Langganan',
+                'Untuk membatalkan atau mengubah langganan, buka:\n\nGoogle Play Store → Profil → Pembayaran & langganan → Langganan → OmsetKu',
+                [{ text:'Mengerti' }]
+              )}
+              style={{ backgroundColor:C.input, borderRadius:12, paddingVertical:12, alignItems:'center' }}>
+              <Text style={{ color:C.muted, fontSize:13, fontWeight:'700' }}>
+                ⚙  Kelola Langganan di Play Store
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <Text style={{ color:C.muted, fontSize:11, textAlign:'center', marginTop:4 }}>

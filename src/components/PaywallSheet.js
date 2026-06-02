@@ -6,7 +6,7 @@
 import React, { useContext } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, ScrollView,
-  Platform,
+  Platform, Dimensions,
 } from 'react-native';
 import { ThemeContext } from '../theme';
 import { PRODUCTS, PAYWALL_MAP, PID, fmtPrice } from '../premium';
@@ -138,8 +138,7 @@ export function PaywallSheet({ featureKey, visible, onClose, onBuy }) {
           <View style={{
             backgroundColor: C.card,
             borderTopLeftRadius: 24, borderTopRightRadius: 24,
-            paddingBottom: Platform.OS === 'ios' ? 36 : 24,
-            maxHeight: '90%',
+            maxHeight: Dimensions.get('window').height * 0.88,
           }}>
             {/* Handle */}
             <View style={{
@@ -147,7 +146,10 @@ export function PaywallSheet({ featureKey, visible, onClose, onBuy }) {
               backgroundColor: C.border, alignSelf: 'center', marginTop: 12, marginBottom: 4,
             }} />
 
-            <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <ScrollView
+              contentContainerStyle={{ padding: 20, paddingBottom: Platform.OS === 'ios' ? 50 : 40 }}
+              showsVerticalScrollIndicator={true}
+              bounces={false}>
               {/* Header */}
               <Text style={{ fontSize: 20, marginBottom: 4, textAlign: 'center' }}>🔓</Text>
               <Text style={{

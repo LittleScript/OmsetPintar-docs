@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useContext } from 'react';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Platform, StatusBar, Share, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Platform, StatusBar, Share, Dimensions, Image } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import { ThemeContext, getStyles, SalesChip, btnStyle, KpiCard } from '../theme';
 import { COLORS, MONTHS, MONTHS_F } from '../constants';
@@ -535,88 +535,101 @@ function DashboardScreen({ data, onYearChange }) {
                 </>)}
               </View>
 
-              {/* Kartu Rekap — preview sekaligus yang akan di-capture & share */}
+              {/* Kartu Rekap — clean, profesional, mudah dibaca */}
               <View ref={rekapCardRef} collapsable={false}
-                style={{ backgroundColor:'#1E3A5F', borderRadius:16, padding:20,
-                  marginBottom:16, overflow:'hidden' }}>
-                {/* Header kartu */}
-                <View style={{ flexDirection:'row', justifyContent:'space-between',
-                  alignItems:'center', marginBottom:14 }}>
-                  <Text style={{ color:'rgba(255,255,255,0.5)', fontSize:10,
-                    fontWeight:'800', letterSpacing:2 }}>◉ OMSETKU</Text>
-                  <Text style={{ color:'rgba(255,255,255,0.6)', fontSize:10 }}>
+                style={{ backgroundColor:'#FFFFFF', borderRadius:16, marginBottom:16,
+                  overflow:'hidden', borderWidth:1, borderColor:'#e2e8f0' }}>
+
+                {/* Header hijau dengan logo */}
+                <View style={{ backgroundColor:'#f0fdf4', paddingHorizontal:16, paddingVertical:12,
+                  flexDirection:'row', alignItems:'center', justifyContent:'space-between',
+                  borderBottomWidth:1, borderBottomColor:'#dcfce7' }}>
+                  <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                    <Image source={require('../../assets/logo_header.png')}
+                      style={{ width:28, height:28 }} />
+                    <Text style={{ color:'#16a34a', fontSize:14, fontWeight:'800', letterSpacing:0.5 }}>
+                      OmsetKu
+                    </Text>
+                  </View>
+                  <Text style={{ color:'#64748b', fontSize:10, fontWeight:'600' }}>
                     {data.companyName || 'Toko'}
                   </Text>
                 </View>
-                {/* Judul periode */}
-                <Text style={{ color:'rgba(255,255,255,0.45)', fontSize:9,
-                  letterSpacing:1.5, textTransform:'uppercase', marginBottom:2 }}>
-                  {sharePreview.header}
-                </Text>
-                {sharePreview.sub ? (
-                  <Text style={{ color:'rgba(255,255,255,0.9)', fontSize:12,
-                    fontWeight:'700', marginBottom:14 }}>
-                    {sharePreview.sub}
+
+                <View style={{ padding:16 }}>
+                  {/* Judul periode */}
+                  <Text style={{ color:'#16a34a', fontSize:9, fontWeight:'800',
+                    letterSpacing:1.5, textTransform:'uppercase', marginBottom:2 }}>
+                    {sharePreview.header}
                   </Text>
-                ) : <View style={{ marginBottom:10 }} />}
-                {/* Garis */}
-                <View style={{ height:1, backgroundColor:'rgba(255,255,255,0.1)', marginBottom:14 }} />
-                {/* Total besar */}
-                <Text style={{ color:'rgba(255,255,255,0.5)', fontSize:9,
-                  textAlign:'center', letterSpacing:1.5, textTransform:'uppercase' }}>
-                  TOTAL OMSET
-                </Text>
-                {sharePreview.txns.length > 0 ? (
-                  <>
-                    <Text style={{ color:'#F59E0B', fontSize:26, fontWeight:'800',
-                      textAlign:'center', marginTop:4,
-                      fontFamily: Platform.OS==='ios'?'Courier New':'monospace' }}>
-                      {toIdr(sharePreview.total)}
+                  {sharePreview.sub ? (
+                    <Text style={{ color:'#334155', fontSize:13, fontWeight:'700', marginBottom:12 }}>
+                      {sharePreview.sub}
                     </Text>
-                    <Text style={{ color:'rgba(255,255,255,0.4)', fontSize:11,
-                      textAlign:'center', marginTop:4, marginBottom:14 }}>
-                      {sharePreview.txns.length} transaksi
-                    </Text>
-                    {/* Garis */}
-                    <View style={{ height:1, backgroundColor:'rgba(255,255,255,0.1)', marginBottom:12 }} />
-                    {/* Per sales */}
-                    {salesList.map((s,i) => {
-                      const sTx = sharePreview.txns.filter(t => t.sales === s);
-                      if (!sTx.length) return null;
-                      return (
-                        <View key={s} style={{ flexDirection:'row', justifyContent:'space-between',
-                          alignItems:'center', marginBottom:7 }}>
-                          <View style={{ flexDirection:'row', alignItems:'center', gap:7 }}>
-                            <View style={{ width:6, height:6, borderRadius:3,
-                              backgroundColor: COLORS[i%COLORS.length] }} />
-                            <Text style={{ color:'rgba(255,255,255,0.75)', fontSize:12 }}>{s}</Text>
+                  ) : <View style={{ marginBottom:10 }} />}
+
+                  {/* Total besar */}
+                  <View style={{ backgroundColor:'#f0fdf4', borderRadius:12, padding:14,
+                    alignItems:'center', marginBottom:14 }}>
+                    <Text style={{ color:'#64748b', fontSize:9, letterSpacing:1.5,
+                      textTransform:'uppercase', marginBottom:4 }}>TOTAL OMSET</Text>
+                    {sharePreview.txns.length > 0 ? (
+                      <>
+                        <Text style={{ color:'#16a34a', fontSize:28, fontWeight:'800',
+                          fontFamily: Platform.OS==='ios'?'Courier New':'monospace' }}>
+                          {toIdr(sharePreview.total)}
+                        </Text>
+                        <Text style={{ color:'#94a3b8', fontSize:11, marginTop:2 }}>
+                          {sharePreview.txns.length} transaksi
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={{ color:'#94a3b8', fontSize:12, fontStyle:'italic', marginVertical:8 }}>
+                        Tidak ada transaksi
+                      </Text>
+                    )}
+                  </View>
+
+                  {/* Per sales — hanya jika ada transaksi */}
+                  {sharePreview.txns.length > 0 && (
+                    <View style={{ borderTopWidth:1, borderTopColor:'#f1f5f9', paddingTop:10 }}>
+                      {salesList.map((s,i) => {
+                        const sTx = sharePreview.txns.filter(t => t.sales === s);
+                        if (!sTx.length) return null;
+                        const stotal = sTx.reduce((a,t)=>a+t.amount,0);
+                        return (
+                          <View key={s} style={{ flexDirection:'row', justifyContent:'space-between',
+                            alignItems:'center', paddingVertical:6,
+                            borderBottomWidth:1, borderBottomColor:'#f8fafc' }}>
+                            <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                              <View style={{ width:8, height:8, borderRadius:4,
+                                backgroundColor: COLORS[i%COLORS.length] }} />
+                              <Text style={{ color:'#334155', fontSize:12, fontWeight:'600' }}>{s}</Text>
+                            </View>
+                            <View style={{ alignItems:'flex-end' }}>
+                              <Text style={{ color:'#1e293b', fontSize:13, fontWeight:'800' }}>
+                                {toIdr(stotal)}
+                              </Text>
+                              <Text style={{ color:'#94a3b8', fontSize:9 }}>{sTx.length} bon</Text>
+                            </View>
                           </View>
-                          <View style={{ alignItems:'flex-end' }}>
-                            <Text style={{ color:'#fff', fontSize:12, fontWeight:'700' }}>
-                              {toIdr(sTx.reduce((a,t)=>a+t.amount,0))}
-                            </Text>
-                            <Text style={{ color:'rgba(255,255,255,0.35)', fontSize:9 }}>
-                              {sTx.length} bon
-                            </Text>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </>
-                ) : (
-                  <Text style={{ color:'rgba(255,255,255,0.3)', fontSize:12,
-                    textAlign:'center', marginVertical:16, fontStyle:'italic' }}>
-                    Tidak ada transaksi
-                  </Text>
-                )}
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+
                 {/* Footer */}
-                <View style={{ height:1, backgroundColor:'rgba(255,255,255,0.07)',
-                  marginTop:10, marginBottom:10 }} />
-                <Text style={{ color:'rgba(255,255,255,0.25)', fontSize:9, textAlign:'center' }}>
-                  via OmsetKu  ·  {new Date().toLocaleDateString('id-ID',
-                    { day:'numeric', month:'short', year:'numeric',
-                      hour:'2-digit', minute:'2-digit' })}
-                </Text>
+                <View style={{ backgroundColor:'#f8fafc', paddingHorizontal:16, paddingVertical:8,
+                  borderTopWidth:1, borderTopColor:'#f1f5f9', flexDirection:'row',
+                  justifyContent:'space-between', alignItems:'center' }}>
+                  <Text style={{ color:'#94a3b8', fontSize:9 }}>via OmsetKu</Text>
+                  <Text style={{ color:'#94a3b8', fontSize:9 }}>
+                    {new Date().toLocaleDateString('id-ID',
+                      { day:'numeric', month:'short', year:'numeric',
+                        hour:'2-digit', minute:'2-digit' })}
+                  </Text>
+                </View>
               </View>
 
               {/* Tombol share — gambar = premium, teks = gratis */}
