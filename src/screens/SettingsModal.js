@@ -13,7 +13,7 @@ import { COLORS, MONTHS_F, APP_VER, SCHEMA_VER, GDRIVE_TOKEN_KEY, GDRIVE_HOUR_KE
 import { toIdr, toShort, todayStr, fmtDate, getNorm, parseCsvText, padNum, parseBon } from '../utils';
 import { isGdriveTokenValid, scheduleReminder, cancelReminder } from '../services';
 import { PurchasesContext } from '../contexts';
-import { can } from '../premium';
+import { can, getMaxSales, FREE } from '../premium';
 
 function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   driveEmail, driveLastSync, driveSyncing, driveTokenExpired,
@@ -24,6 +24,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   const hasExcel    = can.excelExport(purchases);
   const hasBackup   = can.backupDrive(purchases);
   const hasShare    = can.shareKartu(purchases);
+  const maxSales    = getMaxSales(purchases);
 
   const { salesList, bonConfig, dateFormat, companyName } = data;
   const [themeMode, setThemeMode]       = useState(data.themeMode||'dark');
@@ -78,6 +79,11 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
     if (!nm || salesList.includes(nm)) {
       Alert.alert('','Nama sudah ada atau kosong'); return;
     }
+    // Cek limit sales berdasarkan tier premium
+    if (salesList.length >= maxSales) {
+      openPaywall('more_sales');
+      return;
+    }
     await onUpdate({ addSales: nm });
     setNewSales('');
   };
@@ -110,11 +116,45 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   };
 
   const handleReset = () => {
-    Alert.alert('Reset Semua Data',
-      'Semua transaksi akan dihapus permanen. Settings tidak dihapus.',
+    // Langkah 1: konfirmasi pertama
+    Alert.alert(
+      '🗑 Reset Semua Data',
+      'SEMUA transaksi akan dihapus secara permanen dan tidak bisa dikembalikan.\n\nPengaturan (nama bisnis, sales, format) tidak ikut terhapus.',
       [
-        { text:'Batal', style:'cancel' },
-        { text:'Hapus Semua', style:'destructive', onPress: () => onUpdate({ resetData: true }) },
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus Semua', style: 'destructive',
+          onPress: async () => {
+            // Langkah 2: jika fingerprint aktif → verifikasi dulu
+            if (pinLockEnabled) {
+              try {
+                const hasHw    = await LocalAuthentication.hasHardwareAsync();
+                const enrolled = await LocalAuthentication.isEnrolledAsync();
+                if (hasHw && enrolled) {
+                  const result = await LocalAuthentication.authenticateAsync({
+                    promptMessage:         'Verifikasi untuk menghapus semua data',
+                    fallbackLabel:         'Gunakan PIN HP',
+                    cancelLabel:           'Batal',
+                    disableDeviceFallback: false,
+                  });
+                  if (!result.success) return; // batal — jangan hapus
+                }
+              } catch(e) {
+                // Fingerprint error → tetap lanjut (jangan block user)
+              }
+            }
+            // Langkah 3: hapus setelah verifikasi
+            Alert.alert(
+              'Konfirmasi Terakhir',
+              'Yakin? Data yang dihapus tidak bisa dipulihkan.',
+              [
+                { text: 'Batal', style: 'cancel' },
+                { text: 'Ya, Hapus Sekarang', style: 'destructive',
+                  onPress: () => onUpdate({ resetData: true }) },
+              ]
+            );
+          },
+        },
       ]
     );
   };
@@ -625,9 +665,15 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
 
           {/* Sales management */}
           <View style={st.card}>
-            <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-              TIM SALES
-            </Text>
+            <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+              <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase' }}>
+                TIM SALES
+              </Text>
+              <Text style={{ color: salesList.length >= maxSales ? C.warning : C.muted, fontSize:11, fontWeight:'700' }}>
+                {salesList.length}/{maxSales === Infinity ? '∞' : maxSales}
+                {salesList.length >= maxSales && maxSales < 50 ? ' 🔒' : ''}
+              </Text>
+            </View>
             {salesList.map((sl, i) => (
               <View key={sl} style={{ flexDirection:'row', alignItems:'center', gap:10, marginBottom:10 }}>
                 <View style={{ width:12, height:12, borderRadius:6, backgroundColor:COLORS[i%COLORS.length] }} />
