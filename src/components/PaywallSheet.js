@@ -72,6 +72,11 @@ function ProductCard({ product, onBuy, highlight }) {
               Hemat {fmtPrice(product.savings)} vs beli satuan
             </Text>
           ) : null}
+          {product.trial ? (
+            <Text style={{ color: C.success, fontSize: 11, fontWeight: '700', marginTop: 4 }}>
+              🎁 {product.trial}
+            </Text>
+          ) : null}
         </View>
 
         {/* Harga */}
@@ -182,6 +187,19 @@ export function PaywallSheet({ featureKey, visible, onClose, onBuy }) {
                 <View style={{ flex: 1, height: 1, backgroundColor: C.border }} />
                 <Text style={{ color: C.muted, fontSize: 11 }}>atau berlangganan</Text>
                 <View style={{ flex: 1, height: 1, backgroundColor: C.border }} />
+              </View>
+              {/* Trial banner */}
+              <View style={{ backgroundColor: C.success + '18', borderRadius: 10, padding: 10,
+                marginBottom: 10, flexDirection:'row', alignItems:'center', gap:8 }}>
+                <Text style={{ fontSize: 16 }}>🎁</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.success, fontSize: 12, fontWeight: '800' }}>
+                    Coba GRATIS 7 Hari
+                  </Text>
+                  <Text style={{ color: C.muted, fontSize: 10 }}>
+                    Tidak puas? Batalkan kapan saja · Uang kembali dijamin
+                  </Text>
+                </View>
               </View>
 
               {/* Subscription (Yearly di-highlight sebagai target) */}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Alert, Platform, ScrollView, StatusBar, ActivityIndicator } from 'react-native';
 import { ThemeContext, getStyles } from '../theme';
 import { COLORS } from '../constants';
@@ -77,9 +77,21 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
     return allCustomers.filter(c => c.name.toLowerCase().includes(q));
   }, [allCustomers, search]);
 
-  // Truncated — free tier max 50 pelanggan per tampilan
-  const displayedFiltered   = MAX_CUSTOMERS === Infinity ? filtered : filtered.slice(0, MAX_CUSTOMERS);
+  // JS Pagination — tampil 30 per halaman, lebih cepat render
+  const CUST_PAGE_SIZE = 30;
+  const [custPage, setCustPage] = useState(1);
+  // Reset page saat filter/search/sort berubah
+  useMemo(() => { setCustPage(1); }, [salesF, search, sortBy]);
+
+  // Truncated oleh free tier limit dulu, lalu paginate
+  const premiumFiltered    = MAX_CUSTOMERS === Infinity ? filtered : filtered.slice(0, MAX_CUSTOMERS);
   const hiddenCustomerCount = Math.max(0, filtered.length - (MAX_CUSTOMERS === Infinity ? filtered.length : MAX_CUSTOMERS));
+  const displayedFiltered  = premiumFiltered.slice(0, custPage * CUST_PAGE_SIZE);
+  const hasMoreCustomers   = displayedFiltered.length < premiumFiltered.length;
+
+  const handleCustLoadMore = useCallback(() => {
+    if (hasMoreCustomers) setCustPage(p => p + 1);
+  }, [hasMoreCustomers]);
 
   // Group A-Z dari displayedFiltered (sudah ter-truncate)
   const grouped = useMemo(() => {
@@ -179,6 +191,8 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
             keyExtractor={c => `${c.sales}|${c.name}`}
             contentContainerStyle={{ paddingHorizontal:14, paddingBottom:110 }}
             renderItem={({ item: c }) => renderCustomerItem({ item: c })}
+            onEndReached={handleCustLoadMore}
+            onEndReachedThreshold={0.3}
             ListFooterComponent={
               <LockRow hiddenCount={hiddenCustomerCount} label="pelanggan"
                 onUnlock={() => openPaywall('customer_full')} />
@@ -195,6 +209,11 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
           data={grouped}
           keyExtractor={([letter]) => letter}
           contentContainerStyle={{ paddingHorizontal:14, paddingBottom:110 }}
+          onEndReached={handleCustLoadMore}
+          onEndReachedThreshold={0.3}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
           renderItem={({ item: [letter, customers] }) => (
             <View key={letter}>
               <Text style={{ color:C.primary, fontSize:13, fontWeight:'800',

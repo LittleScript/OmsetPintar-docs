@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useContext } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import React, { useState, useMemo, useContext, useCallback } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, FlatList, ActivityIndicator } from 'react-native';
 import { ThemeContext, getStyles, SalesChip } from '../theme';
 import { COLORS, MONTHS_F } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getWeekBounds, filterByPeriod, getRanking } from '../utils';
@@ -17,6 +17,8 @@ function RankingScreen({ data }) {
   const { salesList, transactions, dateFormat } = data;
   const [activeSales, setActiveSales] = useState(salesList[0]||'');
   const [period, setPeriod]           = useState('year');
+  const RANK_PAGE_SIZE = 30;
+  const [rankPage, setRankPage] = useState(1);
   const [rankYear, setRankYear]       = useState(new Date().getFullYear());
   const [rankMonth, setRankMonth]     = useState(new Date().getMonth()+1);
   const [rankDate, setRankDate]       = useState(todayStr()); // untuk navigasi hari & minggu
@@ -36,6 +38,18 @@ function RankingScreen({ data }) {
     }
     return getRanking(filtered, activeSales);
   }, [activeTxns, activeSales, period, rankYear, rankMonth, rankDate]);
+
+  // Reset page saat filter berubah
+  useMemo(() => { setRankPage(1); }, [activeSales, period, rankYear, rankMonth, rankDate]);
+
+  // Paginate ranked list
+  const rankedSlice    = ranked.slice(0, MAX_RANK === Infinity ? ranked.length : MAX_RANK);
+  const displayedRanked = rankedSlice.slice(0, rankPage * RANK_PAGE_SIZE);
+  const hasMoreRanked   = displayedRanked.length < rankedSlice.length;
+
+  const handleRankLoadMore = useCallback(() => {
+    if (hasMoreRanked) setRankPage(p => p + 1);
+  }, [hasMoreRanked]);
 
   const shiftDate = (days) => {
     const d = new Date(rankDate + 'T12:00:00');
@@ -141,8 +155,8 @@ function RankingScreen({ data }) {
             </View>
           )}
 
-          {/* Full list */}
-          {ranked.slice(0, MAX_RANK).map((r, i) => (
+          {/* Full list — paginated 30/load */}
+          {displayedRanked.map((r, i) => (
             <View key={r.name+i} style={[st.card, { flexDirection:'row', gap:12, alignItems:'center', borderWidth:1, borderColor:i<3?salesColor+'44':C.border }]}>
               <View style={{ width:34, height:34, borderRadius:10, alignItems:'center', justifyContent:'center',
                 backgroundColor: i===0?C.accent : i===1?'#475569' : i===2?'#92400e' : C.input }}>
@@ -161,6 +175,15 @@ function RankingScreen({ data }) {
               </Text>
             </View>
           ))}
+          {/* Load more jika ada lebih */}
+          {hasMoreRanked && (
+            <TouchableOpacity onPress={handleRankLoadMore}
+              style={{ alignItems:'center', paddingVertical:12, backgroundColor:C.input, borderRadius:12, marginBottom:4 }}>
+              <Text style={{ color:C.muted, fontSize:12, fontWeight:'700' }}>
+                Tampilkan lebih banyak ({rankedSlice.length - displayedRanked.length} lagi)
+              </Text>
+            </TouchableOpacity>
+          )}
           {/* Lock row jika ada lebih dari MAX_RANK */}
           <LockRow
             hiddenCount={ranked.length > MAX_RANK ? ranked.length - MAX_RANK : 0}

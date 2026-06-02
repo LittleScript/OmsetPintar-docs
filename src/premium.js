@@ -91,8 +91,9 @@ export const PRODUCTS = {
     id: PID.MONTHLY_PLUS, group: 'subscription', type: 'monthly',
     name: 'Monthly Plus', price: 18900,
     tagline: 'Semua fitur / bulan',
-    badge: null,   // ← decoy: bikin Yearly keliatan murah
-    features: ['Semua fitur premium', 'Update otomatis', 'Batalkan kapan saja'],
+    badge: '🎁 7 HARI GRATIS',  // free trial badge
+    trial: '7 hari gratis, batalkan kapan saja',
+    features: ['7 hari coba GRATIS', 'Semua fitur premium', 'Batalkan kapan saja', 'Uang kembali jika tidak puas'],
   },
   [PID.YEARLY_PLUS]: {
     id: PID.YEARLY_PLUS, group: 'subscription', type: 'yearly',
@@ -100,7 +101,8 @@ export const PRODUCTS = {
     tagline: 'Semua fitur / tahun',
     badge: 'HEMAT 25%',
     savings: 57800,
-    features: ['Semua fitur premium', 'Hanya Rp 14.083 / bulan', 'Hemat Rp 57.800 vs bulanan'],
+    trial: '7 hari gratis, batalkan kapan saja',
+    features: ['7 hari coba GRATIS', 'Hanya Rp 14.083 / bulan', 'Hemat Rp 57.800 vs bulanan', 'Uang kembali jika tidak puas'],
   },
 };
 
