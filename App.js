@@ -793,14 +793,15 @@ export default function App() {
           onDriveDisconnect={handleDisconnectDrive}
         />
       )}
+      {/* PaywallSheet di DALAM ThemeContext.Provider agar dapat theme yang benar */}
+      <PaywallSheet
+        featureKey={paywallKey}
+        visible={!!paywallKey}
+        onClose={() => setPaywallKey(null)}
+        onBuy={handlePurchase}
+      />
     </View>
     </ThemeContext.Provider>
-    <PaywallSheet
-      featureKey={paywallKey}
-      visible={!!paywallKey}
-      onClose={() => setPaywallKey(null)}
-      onBuy={handlePurchase}
-    />
     </PurchasesContext.Provider>
   );
 }

@@ -161,7 +161,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
           {['ALL', ...salesList].map((sl, i) => (
             <TouchableOpacity key={sl} onPress={() => setSalesF(sl)}
-              style={chipStyle(salesF===sl, i===0?C.accent:COLORS[(i-1)%COLORS.length])}>
+              style={chipStyle(salesF===sl, i===0?C.accent:COLORS[(i-1)%COLORS.length], C)}>
               <Text style={{ color:salesF===sl?'#fff':C.muted, fontSize:12, fontWeight:'700' }}>
                 {sl}
               </Text>
