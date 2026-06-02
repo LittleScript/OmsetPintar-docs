@@ -43,48 +43,81 @@ export async function isGdriveTokenValid() {
 
 // ─── GOOGLE DRIVE UPLOAD ─────────────────────────────────────────────────────
 export async function uploadToDrive(accessToken, payload) {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+
+  // 1. Cari/buat folder OmsetKu Backup
   const qFolder = encodeURIComponent(`name='OmsetKu Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${qFolder}&fields=files(id)`,
-    { headers: { Authorization: `Bearer ${accessToken}` } });
+  const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${qFolder}&fields=files(id)`, { headers });
   const folderData = await folderRes.json();
   let folderId = folderData.files?.[0]?.id;
 
   if (!folderId) {
     const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'OmsetKu Backup', mimeType: 'application/vnd.google-apps.folder' }),
     });
     folderId = (await cr.json()).id;
   }
 
+  // Gunakan nama file tetap per hari — satu file per hari, tidak berlipat-lipat
   const filename = `omsetku-backup-${todayStr()}.json`;
   const content  = JSON.stringify(payload, null, 2);
   const boundary = 'omsetku_boundary';
-  const body = [
-    `--${boundary}`,
-    'Content-Type: application/json; charset=UTF-8',
-    '',
-    JSON.stringify({ name: filename, parents: [folderId] }),
-    `--${boundary}`,
-    'Content-Type: application/json',
-    '',
-    content,
-    `--${boundary}--`,
-  ].join('\r\n');
 
-  const uploadRes = await fetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': `multipart/related; boundary=${boundary}`,
-      },
-      body,
-    }
-  );
-  if (!uploadRes.ok) throw new Error(`Drive upload failed: ${uploadRes.status}`);
+  // 2. Cek apakah file dengan nama ini sudah ada di folder
+  const qFile   = encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`);
+  const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${qFile}&fields=files(id)`, { headers });
+  const fileData = await fileRes.json();
+  const existingId = fileData.files?.[0]?.id;
+
+  if (existingId) {
+    // 3a. File sudah ada hari ini → UPDATE (PATCH) isi file, tidak buat file baru
+    const patchBody = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify({}), // metadata kosong (tidak ubah nama)
+      `--${boundary}`,
+      'Content-Type: application/json',
+      '',
+      content,
+      `--${boundary}--`,
+    ].join('\r\n');
+
+    const patchRes = await fetch(
+      `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`,
+      {
+        method: 'PATCH',
+        headers: { ...headers, 'Content-Type': `multipart/related; boundary=${boundary}` },
+        body: patchBody,
+      }
+    );
+    if (!patchRes.ok) throw new Error(`Drive update failed: ${patchRes.status}`);
+  } else {
+    // 3b. File belum ada → CREATE baru
+    const postBody = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify({ name: filename, parents: [folderId] }),
+      `--${boundary}`,
+      'Content-Type: application/json',
+      '',
+      content,
+      `--${boundary}--`,
+    ].join('\r\n');
+
+    const postRes = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+      {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': `multipart/related; boundary=${boundary}` },
+        body: postBody,
+      }
+    );
+    if (!postRes.ok) throw new Error(`Drive upload failed: ${postRes.status}`);
+  }
 }
 
 // ─── NOTIFIKASI ───────────────────────────────────────────────────────────────
