@@ -657,6 +657,13 @@ export default function App() {
     await reloadData();
   }, [reloadData, data]);
 
+  // Memoize context value SEBELUM conditional returns — wajib untuk Rules of Hooks
+  // useMemo tidak boleh dipanggil setelah conditional return statement
+  const purchasesCtxValue = useMemo(
+    () => ({ purchases, openPaywall }),
+    [purchases, openPaywall]
+  );
+
   // ─── render ────────────────────────────────────────────────
   if (loading) {
     return (
@@ -715,12 +722,6 @@ export default function App() {
     : `${(data.transactions||[]).filter(t=>!t.deletedAt).length} bon · ${data.activeYear}`;
   const statusColor = saveState==='saved' ? C.success
     : saveState==='error' ? C.danger : C.muted;
-
-  // Memoize context value — cegah re-render semua consumer setiap App render
-  const purchasesCtxValue = useMemo(
-    () => ({ purchases, openPaywall }),
-    [purchases, openPaywall]
-  );
 
   return (
     <PurchasesContext.Provider value={purchasesCtxValue}>
