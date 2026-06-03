@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, FlatList, ActivityIndicator }
 import { ThemeContext, getStyles, SalesChip } from '../theme';
 import { COLORS, MONTHS_F } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getWeekBounds, filterByPeriod, getRanking } from '../utils';
-import { PurchasesContext } from '../contexts';
+import { PurchasesContext, LanguageContext } from '../contexts';
 import { can, FREE } from '../premium';
 import { LockRow } from '../components/LockRow';
 
@@ -11,6 +11,7 @@ function RankingScreen({ data }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
   const { purchases, openPaywall } = useContext(PurchasesContext);
+  const { t } = useContext(LanguageContext);
   const hasRankingFull = can.rankingFull(purchases);
   const MAX_RANK = hasRankingFull ? Infinity : FREE.MAX_RANKING;
 
@@ -75,12 +76,12 @@ function RankingScreen({ data }) {
       {/* Header card */}
       <View style={st.card}>
         <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
-          RANKING PELANGGAN
+          {t('ranking_title')}
         </Text>
 
         {/* Period selector */}
         <View style={{ flexDirection:'row', gap:6, marginBottom:10 }}>
-          {[['today','Hari'],['week','Minggu'],['month','Bulan'],['year','Tahun']].map(([id,lbl]) => (
+          {[['today',t('day_tab')],['week',t('week_tab')],['month',t('month_tab')],['year',t('year_tab')]].map(([id,lbl]) => (
             <TouchableOpacity key={id} onPress={() => setPeriod(id)}
               style={{ flex:1, backgroundColor:period===id?C.accent:C.input, borderRadius:10, paddingVertical:8, alignItems:'center' }}>
               <Text style={{ color:period===id?'#fff':C.muted, fontSize:12, fontWeight:'700' }}>{lbl}</Text>
@@ -121,14 +122,14 @@ function RankingScreen({ data }) {
           ))}
         </ScrollView>
         <Text style={{ color:C.muted, fontSize:10, marginTop:8 }}>
-          Pelanggan dipisah per sales
+          {t('per_sales_note')}
         </Text>
       </View>
 
       {ranked.length === 0 ? (
         <View style={{ alignItems:'center', paddingVertical:48 }}>
           <Text style={{ fontSize:40, marginBottom:12 }}>🏆</Text>
-          <Text style={{ color:C.muted, fontSize:14 }}>Belum ada data untuk periode ini</Text>
+          <Text style={{ color:C.muted, fontSize:14 }}>{t('no_data_period')}</Text>
         </View>
       ) : (
         <>
@@ -180,7 +181,7 @@ function RankingScreen({ data }) {
             <TouchableOpacity onPress={handleRankLoadMore}
               style={{ alignItems:'center', paddingVertical:12, backgroundColor:C.input, borderRadius:12, marginBottom:4 }}>
               <Text style={{ color:C.muted, fontSize:12, fontWeight:'700' }}>
-                Tampilkan lebih banyak ({rankedSlice.length - displayedRanked.length} lagi)
+                {t('load_more', { count: rankedSlice.length - displayedRanked.length })}
               </Text>
             </TouchableOpacity>
           )}

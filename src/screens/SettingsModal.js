@@ -12,7 +12,7 @@ import { ThemeContext, getStyles, btnStyle } from '../theme';
 import { COLORS, MONTHS_F, APP_VER, SCHEMA_VER, GDRIVE_TOKEN_KEY, GDRIVE_HOUR_KEY, GDRIVE_TASK_NAME } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getNorm, parseCsvText, padNum, parseBon, getRanking } from '../utils';
 import { isGdriveTokenValid, scheduleReminder, cancelReminder } from '../services';
-import { PurchasesContext } from '../contexts';
+import { PurchasesContext, LanguageContext } from '../contexts';
 import { can, getMaxSales, FREE } from '../premium';
 
 function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
@@ -21,6 +21,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   const C = useContext(ThemeContext);
   const st = getStyles(C);
   const { purchases, openPaywall } = useContext(PurchasesContext);
+  const { t } = useContext(LanguageContext);
   const hasExcel    = can.excelExport(purchases);
   const hasBackup   = can.backupDrive(purchases);
   const hasShare    = can.shareKartu(purchases);
@@ -61,9 +62,9 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
 
   // Save individual sections inline
   const saveCompany = async () => {
-    if (!company.trim()) { Alert.alert('', 'Nama bisnis tidak boleh kosong'); return; }
+    if (!company.trim()) { Alert.alert('', t('fill_biz_name')); return; }
     await onUpdate({ companyName: company.trim() });
-    Alert.alert('✓', 'Nama bisnis disimpan');
+    Alert.alert(t('biz_saved'), t('biz_saved_msg'));
   };
   const saveBonFormat = async () => {
     await onUpdate({
@@ -71,13 +72,13 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
       bonSeparator: sep,
       bonDigits:    Math.max(1, parseInt(digits)||5),
     });
-    Alert.alert('✓', 'Format bon disimpan');
+    Alert.alert('✓', t('bon_saved_msg'));
   };
 
   const handleAddSales = async () => {
     const nm = newSales.trim().toUpperCase();
     if (!nm || salesList.includes(nm)) {
-      Alert.alert('','Nama sudah ada atau kosong'); return;
+      Alert.alert('', t('sales_exists')); return;
     }
     // Cek limit sales berdasarkan tier premium
     if (salesList.length >= maxSales) {
@@ -89,11 +90,11 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
   };
 
   const handleRemoveSales = (name) => {
-    Alert.alert('Hapus Sales',
-      `Hapus "${name}"? Transaksi lama tetap ada.`,
+    Alert.alert(t('remove_sales_title'),
+      t('remove_sales_desc', { name }),
       [
-        { text:'Batal', style:'cancel' },
-        { text:'Hapus', style:'destructive', onPress: () => onUpdate({ removeSales: name }) },
+        { text: t('cancel'), style:'cancel' },
+        { text: t('delete'), style:'destructive', onPress: () => onUpdate({ removeSales: name }) },
       ]
     );
   };
@@ -106,26 +107,24 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         exportedAt:    new Date().toISOString(),
         data,
       };
-      const filename = `omsetku-backup-${todayStr()}.json`;
+      const filename = `omsetpintar-backup-${todayStr()}.json`;
       const path = FileSystem.documentDirectory + filename;
       await FileSystem.writeAsStringAsync(path, JSON.stringify(payload, null, 2));
-      await Sharing.shareAsync(path, { mimeType:'application/json', dialogTitle:'Export OmsetKu Backup' });
+      await Sharing.shareAsync(path, { mimeType:'application/json', dialogTitle:'Export Omset Pintar Backup' });
     } catch(e) {
       Alert.alert('Export Gagal', String(e));
     }
   };
 
   const handleReset = () => {
-    // Langkah 1: konfirmasi pertama
     Alert.alert(
-      '🗑 Reset Semua Data',
-      'SEMUA transaksi akan dihapus secara permanen dan tidak bisa dikembalikan.\n\nPengaturan (nama bisnis, sales, format) tidak ikut terhapus.',
+      t('reset_title'),
+      t('reset_desc'),
       [
-        { text: 'Batal', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Hapus Semua', style: 'destructive',
+          text: t('reset_delete_btn'), style: 'destructive',
           onPress: async () => {
-            // Langkah 2: jika fingerprint aktif → verifikasi dulu
             if (pinLockEnabled) {
               try {
                 const hasHw    = await LocalAuthentication.hasHardwareAsync();
@@ -133,23 +132,20 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                 if (hasHw && enrolled) {
                   const result = await LocalAuthentication.authenticateAsync({
                     promptMessage:         'Verifikasi untuk menghapus semua data',
-                    fallbackLabel:         'Gunakan PIN HP',
-                    cancelLabel:           'Batal',
+                    fallbackLabel:         t('lock_pin_fallback'),
+                    cancelLabel:           t('cancel'),
                     disableDeviceFallback: false,
                   });
-                  if (!result.success) return; // batal — jangan hapus
+                  if (!result.success) return;
                 }
-              } catch(e) {
-                // Fingerprint error → tetap lanjut (jangan block user)
-              }
+              } catch(e) {}
             }
-            // Langkah 3: hapus setelah verifikasi
             Alert.alert(
-              'Konfirmasi Terakhir',
-              'Yakin? Data yang dihapus tidak bisa dipulihkan.',
+              t('reset_last_confirm'),
+              t('reset_last_desc'),
               [
-                { text: 'Batal', style: 'cancel' },
-                { text: 'Ya, Hapus Sekarang', style: 'destructive',
+                { text: t('cancel'), style: 'cancel' },
+                { text: t('reset_yes'), style: 'destructive',
                   onPress: () => onUpdate({ resetData: true }) },
               ]
             );
@@ -221,10 +217,10 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
       });
 
       const csv      = [header, ...rows].join('\n');
-      const filename = `omsetku-data-${todayStr()}.csv`;
+      const filename = `omsetpintar-data-${todayStr()}.csv`;
       const path     = FileSystem.documentDirectory + filename;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
-      await Sharing.shareAsync(path, { mimeType:'text/csv', dialogTitle:'Export CSV OmsetKu' });
+      await Sharing.shareAsync(path, { mimeType:'text/csv', dialogTitle:'Export CSV Omset Pintar' });
     } catch(e) {
       Alert.alert('Export Gagal', String(e));
     }
@@ -245,7 +241,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
       catch(e) { Alert.alert('Format Tidak Valid', 'File bukan JSON yang valid'); return; }
 
       if (!backup?.data?.transactions) {
-        Alert.alert('Format Tidak Dikenali', 'Bukan file backup OmsetKu yang valid.\nPastikan file berasal dari menu "Export Backup JSON".');
+        Alert.alert('Format Tidak Dikenali', 'Bukan file backup Omset Pintar yang valid.\nPastikan file berasal dari menu "Export Backup JSON".');
         return;
       }
 
@@ -286,8 +282,8 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
     setDriveFilesLoading(true);
     try {
       const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
-      // Cari folder OmsetKu Backup
-      const qF = encodeURIComponent(`name='OmsetKu Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+      // Cari folder Omset Pintar Backup
+      const qF = encodeURIComponent(`name='Omset Pintar Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
       const folderRes = await fetch(
         `https://www.googleapis.com/drive/v3/files?q=${qF}&fields=files(id)`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -333,7 +329,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
       try { backup = JSON.parse(text); }
       catch(e) { Alert.alert('Format Tidak Valid', 'File bukan JSON yang valid'); return; }
       if (!backup?.data?.transactions) {
-        Alert.alert('Format Tidak Dikenali', 'Bukan file backup OmsetKu yang valid.');
+        Alert.alert('Format Tidak Dikenali', 'Bukan file backup Omset Pintar yang valid.');
         return;
       }
       // Reuse alur preview restore JSON yang sudah ada
@@ -389,7 +385,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         ? excelPeriodMonthYear
         : (data.activeYear || new Date().getFullYear());
       const salesL   = data.salesList || [];
-      const company  = data.companyName || 'OmsetKu';
+      const company  = data.companyName || 'Omset Pintar';
       // Filter transaksi sesuai periode yang dipilih
       const allActive = (data.transactions||[]).filter(t => !t.deletedAt);
       const txns = excelPeriodType === 'month'
@@ -443,7 +439,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         // Judul & meta
         sc(ws,r,0,company,'s',S.title); mg(mg_,r,0,r,NCOL-1);
         ws['!rows'] = [{hpt:34}]; r++;
-        sc(ws,r,0,`Laporan Omset Tahun ${yr}   |   OmsetKu v${APP_VER}   |   ${new Date().toLocaleDateString('id-ID',{dateStyle:'long'})}`,
+        sc(ws,r,0,`Laporan Omset Tahun ${yr}   |   Omset Pintar v${APP_VER}   |   ${new Date().toLocaleDateString('id-ID',{dateStyle:'long'})}`,
           's',S.meta); mg(mg_,r,0,r,NCOL-1); r++;
         r++; // empty
 
@@ -620,13 +616,13 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
 
       const base64  = XLSX.write(wb, { type:'base64', bookType:'xlsx', cellStyles:true });
       const fname   = excelPeriodType === 'month'
-        ? `OmsetKu-${company.replace(/\s/g,'-')}-${MONTHS_F[excelPeriodMonth-1]}-${excelPeriodMonthYear}.xlsx`
-        : `OmsetKu-${company.replace(/\s/g,'-')}-${yr}.xlsx`;
+        ? `OmsetPintar-${company.replace(/\s/g,'-')}-${MONTHS_F[excelPeriodMonth-1]}-${excelPeriodMonthYear}.xlsx`
+        : `OmsetPintar-${company.replace(/\s/g,'-')}-${yr}.xlsx`;
       const uri     = FileSystem.documentDirectory + fname;
       await FileSystem.writeAsStringAsync(uri, base64, { encoding:FileSystem.EncodingType.Base64 });
       await Sharing.shareAsync(uri, {
         mimeType:    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        dialogTitle: 'Export Excel OmsetKu',
+        dialogTitle: 'Export Excel Omset Pintar',
       });
       setShowExcelMenu(false);
     } catch(e) {
@@ -640,7 +636,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
     <Modal visible animationType="slide" onRequestClose={onClose}>
       <View style={[st.container, { paddingTop: Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
         <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:16, paddingVertical:12, borderBottomWidth:1, borderBottomColor:C.border }}>
-          <Text style={{ color:C.text, fontSize:18, fontWeight:'800' }}>⚙  Pengaturan</Text>
+          <Text style={{ color:C.text, fontSize:18, fontWeight:'800' }}>{t('settings_title')}</Text>
           <TouchableOpacity onPress={onClose}
             style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:12, paddingVertical:6 }}>
             <Text style={{ color:C.muted }}>✕ Tutup</Text>
@@ -650,10 +646,10 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         <ScrollView contentContainerStyle={{ padding:16, paddingBottom:50 }}>
           {/* Company — simpan inline */}
           <View style={st.card}>
-            <Text style={st.label}>Nama Bisnis</Text>
+            <Text style={st.label}>{t('biz_name_label')}</Text>
             <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
               <TextInput value={company} onChangeText={setCompany}
-                placeholder="Nama bisnis..." placeholderTextColor={C.muted}
+                placeholder={t('biz_placeholder2')} placeholderTextColor={C.muted}
                 style={[st.input, { flex:1 }]} />
               <TouchableOpacity onPress={saveCompany}
                 style={{ backgroundColor:C.primary, borderRadius:10, paddingHorizontal:14,
@@ -667,7 +663,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           <View style={st.card}>
             <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
               <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase' }}>
-                TIM SALES
+                {t('team_sales')}
               </Text>
               <Text style={{ color: salesList.length >= maxSales ? C.warning : C.muted, fontSize:11, fontWeight:'700' }}>
                 {salesList.length}/{maxSales === Infinity ? '∞' : maxSales}
@@ -688,7 +684,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             ))}
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
               <TextInput value={newSales} onChangeText={v => setNewSales(v.toUpperCase())}
-                placeholder="Nama sales baru..." placeholderTextColor={C.muted}
+                placeholder={t('add_sales_hint')} placeholderTextColor={C.muted}
                 style={[st.input, {flex:1}]} returnKeyType="done" onSubmitEditing={handleAddSales} />
               <TouchableOpacity onPress={handleAddSales}
                 style={{ backgroundColor:C.primary, borderRadius:12, paddingHorizontal:18, alignItems:'center', justifyContent:'center' }}>
@@ -700,7 +696,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           {/* Bon format */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-              FORMAT NOMOR BON
+              {t('bon_format_label')}
             </Text>
             <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
               <View style={{ flex:1 }}>
@@ -732,7 +728,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           {/* Date format — kompak, pilih langsung simpan */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:10 }}>
-              FORMAT TANGGAL
+              {t('date_format_label')}
             </Text>
             <View style={{ flexDirection:'row', gap:6 }}>
               {['dd/mm/yyyy','mm/dd/yyyy','yyyy/mm/dd'].map(f => (
@@ -744,7 +740,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   <Text style={{ color: fmt===f ? '#fff' : C.muted, fontSize:10, fontWeight:'700' }}>
                     {f.toUpperCase()}
                   </Text>
-                  {fmt===f && <Text style={{ color:'rgba(255,255,255,0.7)', fontSize:8, marginTop:2 }}>✓ aktif</Text>}
+                  {fmt===f && <Text style={{ color:'rgba(255,255,255,0.7)', fontSize:8, marginTop:2 }}>{t('active_chip')}</Text>}
                 </TouchableOpacity>
               ))}
             </View>
@@ -753,19 +749,19 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           {/* Google Drive Backup — locked jika belum beli BACKUP SYNC */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-              BACKUP GOOGLE DRIVE
+              {t('drive_backup')}
             </Text>
             {!hasBackup ? (
               <TouchableOpacity onPress={() => openPaywall('backup_drive')}
                 style={{ backgroundColor:C.input, borderRadius:14, borderWidth:1.5, borderColor:C.border,
                   borderStyle:'dashed', padding:16, alignItems:'center', gap:8 }}>
                 <Text style={{ fontSize:28 }}>🔒</Text>
-                <Text style={{ color:C.text, fontSize:14, fontWeight:'800' }}>Backup & Sinkron Terkunci</Text>
+                <Text style={{ color:C.text, fontSize:14, fontWeight:'800' }}>{t('drive_locked')}</Text>
                 <Text style={{ color:C.muted, fontSize:12, textAlign:'center' }}>
-                  Google Drive · Sinkron 2 HP · Widget
+                  {t('drive_locked_desc')}
                 </Text>
                 <View style={{ backgroundColor:C.primary, borderRadius:10, paddingHorizontal:18, paddingVertical:9, marginTop:4 }}>
-                  <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>Unlock Rp 49.000 →</Text>
+                  <Text style={{ color:'#fff', fontSize:13, fontWeight:'800' }}>{t('drive_unlock_btn')}</Text>
                 </View>
               </TouchableOpacity>
             ) : driveEmail ? (
@@ -796,10 +792,10 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     <Text style={{ color:C.text, fontSize:13, fontWeight:'700' }}>{driveEmail}</Text>
                     <Text style={{ color: driveSyncing ? C.primary : C.muted, fontSize:11, marginTop:1 }}>
                       {driveSyncing
-                        ? 'Synchronizing data...'
+                        ? t('drive_syncing')
                         : driveLastSync
-                          ? `Last sync: ${driveLastSync}`
-                          : 'Tap untuk sinkron'}
+                          ? `${t('drive_last_sync')} ${driveLastSync}`
+                          : t('drive_sync_tap')}
                     </Text>
                   </View>
                   {driveSyncing
@@ -813,21 +809,21 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     style={{ flex:1, backgroundColor:C.success+'18', borderWidth:1, borderColor:C.success,
                       borderRadius:12, paddingVertical:11, alignItems:'center',
                       opacity: driveSyncing ? 0.5 : 1 }}>
-                    <Text style={{ color:C.success, fontSize:12, fontWeight:'700' }}>☁️ Backup</Text>
+                    <Text style={{ color:C.success, fontSize:12, fontWeight:'700' }}>{t('drive_backup_btn')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={handleListDriveFiles} disabled={driveFilesLoading}
                     style={{ flex:1, backgroundColor:C.primary+'18', borderWidth:1, borderColor:C.primary,
                       borderRadius:12, paddingVertical:11, alignItems:'center',
                       opacity: driveFilesLoading ? 0.5 : 1 }}>
                     <Text style={{ color:C.primary, fontSize:12, fontWeight:'700' }}>
-                      {driveFilesLoading ? '⏳ Memuat...' : '📥 Restore'}
+                      {driveFilesLoading ? t('loading') : t('drive_restore_btn')}
                     </Text>
                   </TouchableOpacity>
                 </View>
                 {/* Jam backup otomatis */}
                 <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between',
                   backgroundColor:C.input, borderRadius:12, padding:12, marginBottom:10 }}>
-                  <Text style={{ color:C.muted, fontSize:12 }}>⏰ Backup otomatis jam:</Text>
+                  <Text style={{ color:C.muted, fontSize:12 }}>{t('drive_auto_time')}</Text>
                   <View style={{ flexDirection:'row', alignItems:'center', gap:6 }}>
                     <TouchableOpacity
                       onPress={async () => {
@@ -854,7 +850,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                 </View>
                 <TouchableOpacity onPress={onDriveDisconnect}
                   style={{ backgroundColor:C.danger+'11', borderRadius:14, paddingVertical:10, alignItems:'center' }}>
-                  <Text style={{ color:C.danger, fontSize:12, fontWeight:'700' }}>Putus Koneksi</Text>
+                  <Text style={{ color:C.danger, fontSize:12, fontWeight:'700' }}>{t('drive_disconnect')}</Text>
                 </TouchableOpacity>
               </>
             ) : (
@@ -866,11 +862,11 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   style={{ backgroundColor:'#4285F422', borderWidth:1.5, borderColor:'#4285F4',
                     borderRadius:14, paddingVertical:14, alignItems:'center' }}>
                   <Text style={{ color:'#4285F4', fontSize:14, fontWeight:'800' }}>
-                    🔗 Hubungkan Akun Google
+                    {t('drive_connect_btn')}
                   </Text>
                 </TouchableOpacity>
                 <Text style={{ color:C.muted, fontSize:10, textAlign:'center', marginTop:8 }}>
-                  Memerlukan koneksi internet saat setup
+                  {t('drive_need_net')}
                 </Text>
               </>
             )}
@@ -879,17 +875,17 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           {/* ── LAPORAN ── */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:4 }}>
-              LAPORAN
+              {t('report_section')}
             </Text>
             <Text style={{ color:C.muted, fontSize:11, marginBottom:12 }}>
-              Generate laporan Excel profesional siap cetak
+              {t('report_desc')}
             </Text>
             <TouchableOpacity onPress={() => hasExcel ? setShowExcelMenu(true) : openPaywall('excel_export')}
               style={{ backgroundColor: hasExcel ? C.success+'18' : C.input,
                 borderWidth:1.5, borderColor: hasExcel ? C.success : C.border,
                 borderRadius:14, paddingVertical:16, alignItems:'center' }}>
               <Text style={{ color: hasExcel ? C.success : C.muted, fontSize:15, fontWeight:'800' }}>
-                {hasExcel ? '📊' : '🔒'}  Export ke Excel (.xlsx)</Text>
+                {hasExcel ? '📊' : '🔒'}  {t('excel_btn').replace('📊  ', '')}</Text>
               <Text style={{ color: hasExcel ? C.success : C.muted, fontSize:10, marginTop:3, opacity:0.8 }}>
                 {hasExcel ? 'Ringkasan · Per Sales · Bulanan · Pelanggan · Ranking' : 'Laporan & Ekspor — Rp 49.000'}
               </Text>
@@ -899,48 +895,46 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           {/* ── DATA ── */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-              DATA
+              {t('data_section')}
             </Text>
             {/* ── Import ── */}
-            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>IMPORT</Text>
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>{t('import_label')}</Text>
             <TouchableOpacity onPress={handlePickCsv}
               style={{ backgroundColor:C.primary+'18', borderWidth:1.5, borderColor:C.primary, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8 }}>
-              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>📥  Import dari CSV (Google Sheets)</Text>
+              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>{t('import_csv')}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={handlePickJson}
               style={{ backgroundColor:C.primary+'18', borderWidth:1.5, borderColor:C.primary, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:12 }}>
-              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>🔄  Restore dari Backup JSON</Text>
+              <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>{t('import_json')}</Text>
             </TouchableOpacity>
 
             {/* ── Export / Backup ── */}
-            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>EXPORT & BACKUP</Text>
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:6 }}>{t('export_label')}</Text>
             <TouchableOpacity onPress={handleExportCsv}
               style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:8 }}>
-              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>📤  Export ke CSV (Google Sheets)</Text>
+              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>{t('export_csv')}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={handleExport}
               style={{ backgroundColor:C.success+'18', borderWidth:1.5, borderColor:C.success, borderRadius:14, paddingVertical:13, alignItems:'center', marginBottom:12 }}>
-              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>💾  Export Backup JSON</Text>
+              <Text style={{ color:C.success, fontSize:13, fontWeight:'800' }}>{t('export_json')}</Text>
             </TouchableOpacity>
 
             {/* ── Danger ── */}
             <TouchableOpacity onPress={handleReset} style={[btnStyle(C.danger+'33')]}>
-              <Text style={{ color:C.danger, fontSize:13, fontWeight:'700' }}>🗑  Reset Semua Data</Text>
+              <Text style={{ color:C.danger, fontSize:13, fontWeight:'700' }}>{t('reset_data')}</Text>
             </TouchableOpacity>
           </View>
 
           {/* Keamanan — PIN / Fingerprint */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-              KEAMANAN
+              {t('security_section')}
             </Text>
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
               <View style={{ flex:1 }}>
-                <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>🔐 Kunci Aplikasi</Text>
+                <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>{t('lock_app')}</Text>
                 <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>
-                  {pinLockEnabled
-                    ? '✅ Aktif — pakai fingerprint / PIN HP'
-                    : 'Nonaktif — fingerprint / PIN HP saat buka app'}
+                  {pinLockEnabled ? t('lock_active') : t('lock_inactive')}
                 </Text>
               </View>
               <TouchableOpacity
@@ -951,22 +945,22 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     const enrolled = await LocalAuthentication.isEnrolledAsync();
                     if (!hasHw || !enrolled) {
                       Alert.alert(
-                        'Fingerprint Tidak Tersedia',
-                        'HP kamu belum memiliki fingerprint atau PIN yang terdaftar.\n\nAktifkan dulu di Pengaturan HP → Keamanan → Kunci Layar.',
-                        [{ text: 'Mengerti' }]
+                        t('fp_not_avail'),
+                        t('fp_not_avail_desc'),
+                        [{ text: t('understood') }]
                       );
                       return;
                     }
                     const result = await LocalAuthentication.authenticateAsync({
-                      promptMessage:         'Verifikasi untuk mengaktifkan Kunci Aplikasi',
-                      fallbackLabel:         'Gunakan PIN HP',
-                      cancelLabel:           'Batal',
+                      promptMessage:         t('fp_verify'),
+                      fallbackLabel:         t('lock_pin_fallback'),
+                      cancelLabel:           t('cancel'),
                       disableDeviceFallback: false,
                     });
                     if (!result.success) return;
                     setPinLockEnabled(true);
-                    onUpdate({ pinLockEnabled: true, lockTimeout: 0 }); // selalu lock langsung
-                    Alert.alert('🔐 Kunci Aktif', 'Aplikasi akan dikunci otomatis saat ditutup.');
+                    onUpdate({ pinLockEnabled: true, lockTimeout: 0 });
+                    Alert.alert(t('lock_active_msg'), t('lock_active_desc'));
                   } else {
                     // ── NONAKTIFKAN: langsung disable ──
                     setPinLockEnabled(false);
@@ -983,7 +977,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             {/* Kunci langsung saat tutup app — seperti aplikasi bank */}
             {pinLockEnabled && (
               <Text style={{ color:C.muted, fontSize:11, marginTop:8 }}>
-                🔒 Dikunci otomatis saat aplikasi ditutup
+                {t('lock_auto')}
               </Text>
             )}
           </View>
@@ -991,36 +985,39 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           {/* Notifikasi Pengingat */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-              NOTIFIKASI
+              {t('notif_section')}
             </Text>
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom: notifEnabled ? 12 : 0 }}>
               <View style={{ flex:1 }}>
-                <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>🔔 Pengingat Harian</Text>
+                <Text style={{ color:C.text, fontSize:14, fontWeight:'700' }}>{t('daily_reminder')}</Text>
                 <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>
-                  {notifEnabled ? `✅ Aktif — reminder jam ${String(notifHour).padStart(2,'0')}:00` : 'Nonaktif'}
+                  {notifEnabled ? t('notif_active', { hour: String(notifHour).padStart(2,'0') }) : t('notif_inactive')}
                 </Text>
               </View>
               <TouchableOpacity
                 onPress={async () => {
-                  if (!notifEnabled) {
-                    // Minta permission dulu
-                    const { status } = await Notifications.requestPermissionsAsync();
-                    if (status !== 'granted') {
-                      Alert.alert(
-                        'Izin Notifikasi Diperlukan',
-                        'Aktifkan izin notifikasi di Pengaturan HP → Aplikasi → OmsetKu → Notifikasi',
-                        [{ text: 'OK' }]
-                      );
-                      return;
+                  try {
+                    if (!notifEnabled) {
+                      const { status } = await Notifications.requestPermissionsAsync();
+                      if (status !== 'granted') {
+                        Alert.alert(
+                          t('notif_perm_title'),
+                          t('notif_perm_desc'),
+                          [{ text: t('ok') }]
+                        );
+                        return;
+                      }
+                      setNotifEnabled(true);
+                      await scheduleReminder(notifHour, true);
+                      onUpdate({ notifEnabled: true, notifHour });
+                      Alert.alert(t('notif_active_msg'), t('notif_active', { hour: String(notifHour).padStart(2,'0') }));
+                    } else {
+                      setNotifEnabled(false);
+                      await cancelReminder();
+                      onUpdate({ notifEnabled: false });
                     }
-                    setNotifEnabled(true);
-                    await scheduleReminder(notifHour, true);
-                    onUpdate({ notifEnabled: true, notifHour });
-                    Alert.alert('🔔 Notifikasi Aktif', `Reminder akan muncul setiap hari jam ${String(notifHour).padStart(2,'0')}:00`);
-                  } else {
-                    setNotifEnabled(false);
-                    await cancelReminder();
-                    onUpdate({ notifEnabled: false });
+                  } catch(e) {
+                    Alert.alert('⚠️', String(e?.message || e));
                   }
                 }}
                 style={{ width:50, height:28, borderRadius:14,
@@ -1033,14 +1030,16 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
             {notifEnabled && (
               <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between',
                 backgroundColor:C.input, borderRadius:12, padding:12 }}>
-                <Text style={{ color:C.muted, fontSize:12 }}>⏰ Jam pengingat:</Text>
+                {t('notif_time')}
                 <View style={{ flexDirection:'row', alignItems:'center', gap:6 }}>
                   <TouchableOpacity
                     onPress={async () => {
-                      const h = notifHour === 0 ? 23 : notifHour - 1;
-                      setNotifHour(h);
-                      await scheduleReminder(h, true);
-                      onUpdate({ notifEnabled: true, notifHour: h });
+                      try {
+                        const h = notifHour === 0 ? 23 : notifHour - 1;
+                        setNotifHour(h);
+                        await scheduleReminder(h, true);
+                        onUpdate({ notifEnabled: true, notifHour: h });
+                      } catch(_) {}
                     }}
                     style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
                     <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>‹</Text>
@@ -1050,10 +1049,12 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   </Text>
                   <TouchableOpacity
                     onPress={async () => {
-                      const h = notifHour === 23 ? 0 : notifHour + 1;
-                      setNotifHour(h);
-                      await scheduleReminder(h, true);
-                      onUpdate({ notifEnabled: true, notifHour: h });
+                      try {
+                        const h = notifHour === 23 ? 0 : notifHour + 1;
+                        setNotifHour(h);
+                        await scheduleReminder(h, true);
+                        onUpdate({ notifEnabled: true, notifHour: h });
+                      } catch(_) {}
                     }}
                     style={{ backgroundColor:C.card, borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
                     <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>›</Text>
@@ -1066,25 +1067,25 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
           {/* Kelola Pembelian — mode tampilan cukup via toggle di header */}
           <View style={st.card}>
             <Text style={{ color:C.muted, fontSize:11, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-              PEMBELIAN & LANGGANAN
+              {t('purchase_section')}
             </Text>
 
             {/* Daftar yang sudah dibeli */}
             {Object.keys(purchases).length > 0 ? (
               <View style={{ marginBottom:12 }}>
-                <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:8 }}>AKTIF</Text>
+                <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', marginBottom:8 }}>{t('active_purchases')}</Text>
                 {Object.entries(purchases).map(([id, info]) => {
                   const labels = {
-                    omsetku_sales_unlock: '✓ Sales Unlock (3 sales)',
-                    omsetku_sales_pro: '✓ Sales Pro (10 sales)',
-                    omsetku_sales_ultimate: '✓ Sales Ultimate (unlimited)',
-                    omsetku_analytics_dashboard: '✓ Analitik Dashboard',
-                    omsetku_analytics_customers: '✓ Analitik Pelanggan',
-                    omsetku_analytics_export: '✓ Laporan & Ekspor',
-                    omsetku_analytics_all: '✓ Semua Analitik',
-                    omsetku_backup_sync: '✓ Backup & Sinkron',
-                    omsetku_monthly_plus: '✓ Monthly Plus (aktif)',
-                    omsetku_yearly_plus: '✓ Yearly Plus (aktif)',
+                    omsetpintar_sales_unlock: '✓ Sales Unlock (3 sales)',
+                    omsetpintar_sales_pro: '✓ Sales Pro (10 sales)',
+                    omsetpintar_sales_ultimate: '✓ Sales Ultimate (unlimited)',
+                    omsetpintar_analytics_dashboard: '✓ Analitik Dashboard',
+                    omsetpintar_analytics_customers: '✓ Analitik Pelanggan',
+                    omsetpintar_analytics_export: '✓ Laporan & Ekspor',
+                    omsetpintar_analytics_all: '✓ Semua Analitik',
+                    omsetpintar_backup_sync: '✓ Backup & Sinkron',
+                    omsetpintar_monthly_plus: '✓ Monthly Plus (aktif)',
+                    omsetpintar_yearly_plus: '✓ Yearly Plus (aktif)',
                   };
                   return (
                     <View key={id} style={{ flexDirection:'row', justifyContent:'space-between',
@@ -1103,39 +1104,39 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
               </View>
             ) : (
               <Text style={{ color:C.muted, fontSize:12, marginBottom:12, fontStyle:'italic' }}>
-                Belum ada pembelian aktif
+                {t('no_purchases')}
               </Text>
             )}
 
             {/* Tombol-tombol kelola */}
             <TouchableOpacity
               onPress={() => Alert.alert(
-                'Restore Pembelian',
-                'Fitur ini akan terhubung ke Google Play untuk memulihkan pembelian Anda sebelumnya.',
-                [{ text:'OK' }]
+                t('restore_purchase'),
+                t('restore_desc'),
+                [{ text: t('ok') }]
               )}
               style={{ backgroundColor:C.primary+'18', borderWidth:1, borderColor:C.primary,
                 borderRadius:12, paddingVertical:12, alignItems:'center', marginBottom:8 }}>
               <Text style={{ color:C.primary, fontSize:13, fontWeight:'800' }}>
-                🔄  Restore Pembelian
+                {t('restore_btn2')}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => Alert.alert(
-                'Kelola Langganan',
-                'Untuk membatalkan atau mengubah langganan, buka:\n\nGoogle Play Store → Profil → Pembayaran & langganan → Langganan → OmsetKu',
-                [{ text:'Mengerti' }]
+                t('manage_sub'),
+                t('manage_sub_desc'),
+                [{ text: t('understood') }]
               )}
               style={{ backgroundColor:C.input, borderRadius:12, paddingVertical:12, alignItems:'center' }}>
               <Text style={{ color:C.muted, fontSize:13, fontWeight:'700' }}>
-                ⚙  Kelola Langganan di Play Store
+                {t('manage_sub')}
               </Text>
             </TouchableOpacity>
           </View>
 
           <Text style={{ color:C.muted, fontSize:11, textAlign:'center', marginTop:4 }}>
-            OmsetKu v{APP_VER}
+            Omset Pintar v{APP_VER}
           </Text>
           <Text style={{ color:C.muted, fontSize:10, textAlign:'center', marginTop:4 }}>
             by @Maelllai
@@ -1148,11 +1149,11 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
         <Modal visible animationType="slide" transparent onRequestClose={() => !exporting && setShowExcelMenu(false)}>
           <View style={{ flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.65)' }}>
             <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, paddingBottom:36 }}>
-              <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:12 }}>📊 Export ke Excel</Text>
+              <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:12 }}>{t('excel_btn')}</Text>
 
               {/* ── Pilih Periode ── */}
               <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1, marginBottom:8 }}>
-                PERIODE DATA
+                {t('data_period')}
               </Text>
               <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
                 <TouchableOpacity onPress={() => setExcelPeriodType('year')}
@@ -1232,12 +1233,12 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                 style={{ backgroundColor:C.success, borderRadius:16, paddingVertical:16,
                   alignItems:'center', marginTop:16, marginBottom:10, opacity: exporting ? 0.6 : 1 }}>
                 <Text style={{ color:'#fff', fontSize:15, fontWeight:'800' }}>
-                  {exporting ? 'Membuat file...' : `📊 Export ${Object.values(excelChecked).filter(Boolean).length} Sheet`}
+                  {exporting ? t('exporting') : `📊 Export ${Object.values(excelChecked).filter(Boolean).length} Sheet`}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity disabled={exporting} onPress={() => setShowExcelMenu(false)}
                 style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:14, alignItems:'center', opacity: exporting ? 0.4 : 1 }}>
-                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
+                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>{t('cancel')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1285,7 +1286,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     }}
                     style={{ backgroundColor:C.primary, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10, opacity: jsonRestoring ? 0.6 : 1 }}>
                     <Text style={{ color:'#fff', fontSize:14, fontWeight:'800' }}>
-                      {jsonRestoring ? 'Memproses...' : `✓ Restore ${jsonRestorePreview.nonDupeRows.length} (Lewati Duplikat)`}
+                      {jsonRestoring ? t('processing') : `✓ Restore ${jsonRestorePreview.nonDupeRows.length} (Lewati Duplikat)`}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity disabled={jsonRestoring}
@@ -1297,7 +1298,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                     }}
                     style={{ backgroundColor:C.warning+'22', borderWidth:1.5, borderColor:C.warning, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10, opacity: jsonRestoring ? 0.6 : 1 }}>
                     <Text style={{ color:C.warning, fontSize:14, fontWeight:'800' }}>
-                      {jsonRestoring ? 'Memproses...' : `Restore Semua ${jsonRestorePreview.allTxns.length}`}
+                      {jsonRestoring ? t('processing') : `Restore Semua ${jsonRestorePreview.allTxns.length}`}
                     </Text>
                   </TouchableOpacity>
                 </>
@@ -1311,14 +1312,14 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   }}
                   style={{ backgroundColor:C.success, borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10, opacity: jsonRestoring ? 0.6 : 1 }}>
                   <Text style={{ color:'#fff', fontSize:15, fontWeight:'800' }}>
-                    {jsonRestoring ? 'Memproses...' : `✓ Restore ${jsonRestorePreview.allTxns.length} Transaksi`}
+                    {jsonRestoring ? t('processing') : `✓ Restore ${jsonRestorePreview.allTxns.length} ${t('transactions')}`}
                   </Text>
                 </TouchableOpacity>
               )}
 
               <TouchableOpacity disabled={jsonRestoring} onPress={() => setJsonRestorePreview(null)}
                 style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:14, alignItems:'center', opacity: jsonRestoring ? 0.4 : 1 }}>
-                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
+                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>{t('cancel')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1382,7 +1383,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                       borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10,
                       opacity: importing ? 0.6 : 1 }}>
                     <Text style={{ color:'#fff', fontSize:14, fontWeight:'800' }}>
-                      {importing ? 'Mengimport...' : `✓ Import ${importPreview.nonDupeRows.length} (Lewati ${importPreview.dupeRows.length} Duplikat)`}
+                      {importing ? t('importing') : `✓ Import ${importPreview.nonDupeRows.length} (Lewati ${importPreview.dupeRows.length} Duplikat)`}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -1397,7 +1398,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                       borderRadius:16, paddingVertical:16, alignItems:'center', marginBottom:10,
                       opacity: importing ? 0.6 : 1 }}>
                     <Text style={{ color:C.warning, fontSize:14, fontWeight:'800' }}>
-                      {importing ? 'Mengimport...' : `Import Semua ${importPreview.allRows.length} (Termasuk Duplikat)`}
+                      {importing ? t('importing') : `Import Semua ${importPreview.allRows.length} (Termasuk Duplikat)`}
                     </Text>
                   </TouchableOpacity>
                 </>
@@ -1413,7 +1414,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                   style={{ backgroundColor: C.success, borderRadius:16, paddingVertical:16,
                     alignItems:'center', marginBottom:10, opacity: importing ? 0.6 : 1 }}>
                   <Text style={{ color:'#fff', fontSize:15, fontWeight:'800' }}>
-                    {importing ? 'Mengimport...' : `✓ Import ${importPreview.allRows.length} Transaksi`}
+                    {importing ? t('importing') : `✓ Import ${importPreview.allRows.length} ${t('transactions')}`}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -1422,7 +1423,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
                 disabled={importing}
                 onPress={() => setImportPreview(null)}
                 style={{ backgroundColor:C.input, borderRadius:16, paddingVertical:16, alignItems:'center', opacity: importing ? 0.4 : 1 }}>
-                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>Batal</Text>
+                <Text style={{ color:C.muted, fontSize:14, fontWeight:'700' }}>{t('cancel')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1443,7 +1444,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
               </Text>
               <ScrollView style={{ maxHeight:360 }}>
                 {driveFileList.map(file => {
-                  // Extract tanggal dari nama file: omsetku-backup-YYYY-MM-DD.json
+                  // Extract tanggal dari nama file: omsetpintar-backup-YYYY-MM-DD.json
                   const dateMatch = file.name.match(/(\d{4}-\d{2}-\d{2})/);
                   const dateLabel = dateMatch
                     ? fmtDate(dateMatch[1], data.dateFormat)
@@ -1471,7 +1472,7 @@ function SettingsModal({ data, onUpdate, onImport, onRestoreJson, onClose,
               <TouchableOpacity onPress={() => setShowDriveFiles(false)}
                 style={{ marginTop:14, backgroundColor:C.input, borderRadius:12,
                   padding:12, alignItems:'center' }}>
-                <Text style={{ color:C.muted, fontWeight:'700' }}>Batal</Text>
+                <Text style={{ color:C.muted, fontWeight:'700' }}>{t('cancel')}</Text>
               </TouchableOpacity>
             </View>
           </View>

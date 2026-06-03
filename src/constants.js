@@ -2,9 +2,9 @@
 export const MONTHS   = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
 export const MONTHS_F = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 export const COLORS   = ['#2563eb','#22c55e','#f59e0b','#ec4899','#8b5cf6','#ef4444','#06b6d4','#84cc16'];
-export const DB_NAME  = 'OmsetKu.db';
+export const DB_NAME  = 'OmsetPintar.db';
 
-export const APP_VER    = '4.7.0';
+export const APP_VER    = '1.0.0';
 export const SCHEMA_VER = 1;
 
 // ─── THEMES ───────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ export const ONBOARDING_SLIDES = [
   {
     emoji:    '📊',
     accent:   '#2563EB',
-    title:    'Selamat Datang di OmsetKu',
+    title:    'Selamat Datang di Omset Pintar',
     subtitle: 'Aplikasi catat omset harian\nuntuk toko & UMKM Indonesia',
     points: [
       '⚡  Input transaksi dalam hitungan detik',
@@ -60,15 +60,15 @@ export const ONBOARDING_SLIDES = [
 
 // ─── GOOGLE DRIVE CONFIG ──────────────────────────────────────────────────────
 export const GOOGLE_ANDROID_CLIENT_ID = '846894493859-7mnsos08bck0on5p03v66uopqbeld1g6.apps.googleusercontent.com';
-export const GDRIVE_REDIRECT_URI      = 'com.omsetku.app:/oauth2redirect';
+export const GDRIVE_REDIRECT_URI      = 'com.omsetpintar.app:/oauth2redirect';
 export const GDRIVE_TOKEN_KEY         = 'gdrive_access_token';
 export const GDRIVE_REFRESH_KEY       = 'gdrive_refresh_token';
 export const GDRIVE_EXPIRY_KEY        = 'gdrive_token_expiry';
 export const GDRIVE_EMAIL_KEY         = 'gdrive_user_email';
 export const GDRIVE_LAST_BACKUP_KEY   = 'gdrive_last_backup';
 export const GDRIVE_HOUR_KEY          = 'gdrive_backup_hour';
-export const GDRIVE_TASK_NAME         = 'OMSETKU_GDRIVE_BACKUP';
-export const NOTIF_TASK_ID            = 'omsetku-daily-reminder';
+export const GDRIVE_TASK_NAME         = 'OMSETPINTAR_GDRIVE_BACKUP';
+export const NOTIF_TASK_ID            = 'omsetpintar-daily-reminder';
 
 export const GOOGLE_DISCOVERY = {
   authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',

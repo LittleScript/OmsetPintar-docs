@@ -1,4 +1,4 @@
-# OmsetKu — Google Play Store Listing
+# Omset Pintar — Google Play Store Listing
 **Siap dipakai untuk upload ke Play Console**
 
 ---
@@ -7,13 +7,13 @@
 
 | Field | Isi |
 |---|---|
-| **App Name** | OmsetKu |
-| **Package** | com.omsetku.app |
+| **App Name** | Omset Pintar |
+| **Package** | com.omsetpintar.app |
 | **Category** | Business |
 | **Content Rating** | Everyone |
 | **Pricing** | Free |
 | **Contact Email** | aliangkoko@gmail.com |
-| **Privacy Policy URL** | https://littlescript.github.io/OmsetKu-docs/ |
+| **Privacy Policy URL** | https://littlescript.github.io/OmsetPintar-docs/ |
 
 ---
 
@@ -29,9 +29,9 @@ Catat omset harian toko & UMKM — cepat, offline, laporan Excel otomatis
 ## 📄 FULL DESCRIPTION (max 4000 karakter)
 
 ```
-OmsetKu — Aplikasi Catat Omset untuk Toko & UMKM Indonesia
+Omset Pintar — Aplikasi Catat Omset untuk Toko & UMKM Indonesia
 
-Kelola omset penjualan harian toko atau UMKM Anda dengan mudah dan cepat. Dirancang khusus untuk pemilik toko yang memiliki 1–20 sales, OmsetKu membantu Anda mencatat setiap transaksi, memantau performa sales, dan menghasilkan laporan profesional — semuanya dari genggaman tangan.
+Kelola omset penjualan harian toko atau UMKM Anda dengan mudah dan cepat. Dirancang khusus untuk pemilik toko yang memiliki 1–20 sales, Omset Pintar membantu Anda mencatat setiap transaksi, memantau performa sales, dan menghasilkan laporan profesional — semuanya dari genggaman tangan.
 
 ✅ FITUR UTAMA
 
@@ -126,7 +126,7 @@ aplikasi bisnis, omset sales, dashboard penjualan
 
 ## ⭐ FEATURE GRAPHIC TEXT (1024×500 banner Canva)
 
-**Teks utama:** `OmsetKu`
+**Teks utama:** `Omset Pintar`
 **Tagline:** `Catat Omset. Pantau Sales. Grow Bisnis.`
 **Warna background:** `#071018` (navy dark)
 **Accent:** `#2563eb` (biru) + `#22c55e` (hijau)
@@ -136,28 +136,52 @@ aplikasi bisnis, omset sales, dashboard penjualan
 
 ## 🔔 WHAT'S NEW (Changelog untuk Play Store)
 
-```
-Versi 4.6.0 — Update Besar
+### Versi 4.8.0 — Bahasa & Grafik Baru
 
+```
 ✨ FITUR BARU
-• Widget home screen — lihat omset hari ini tanpa buka app
-• Sinkronisasi 2 HP via Google Drive
-• Share rekap sebagai gambar kartu (bukan teks biasa)
-• Perbandingan % omset vs kemarin & minggu lalu
-• Onboarding carousel untuk user baru
-• Notifikasi cerdas — hanya muncul jika belum ada transaksi
-• Timeout kunci aplikasi bisa dikustomisasi (Langsung / 30 detik / 1 menit / 5 menit)
-• Export Excel bisa filter per bulan
+• Toggle bahasa Indonesia/English — semua teks app berubah sekaligus
+• Grafik garis omset harian per sales (bisa pilih bulan)
+• Pilihan bahasa tersimpan permanen
 
 🔧 PERBAIKAN
-• Typo detection lebih akurat (Jaro-Winkler, sedikit false positive)
-• "Abaikan" pasangan typo sekarang tersimpan permanen
-• Google Drive menggunakan OAuth Android native (lebih stabil)
-• Riwayat transaksi loading lebih cepat untuk data besar
-• Icon APK: background putih, logo lebih kecil (tidak terpotong)
+• Fix crash saat mengaktifkan notifikasi pengingat
+• Performa lebih stabil di Android 12+
+```
+
+### Versi 4.7.0 — Update Besar (Freemium + Google Drive)
+
+```
+✨ FITUR BARU
+• Sistem premium à la carte (10 produk, mulai Rp 49.000)
+• Backup & sinkron 2 HP via Google Drive (OAuth Android native)
+• Auto-sync setiap 10 transaksi
+• Grafik bulanan per sales
+• Ranking pelanggan per periode
+• Deteksi typo nama pelanggan (Jaro-Winkler)
+• Export Excel profesional (5 sheet, styling lengkap)
+• Share rekap sebagai gambar kartu
+
+🔧 PERBAIKAN
+• Riwayat transaksi: pagination 30/load (lebih cepat untuk data besar)
+• Setup kunci fingerprint: verifikasi sebelum aktif
+• Lock langsung saat app ditutup (seperti aplikasi bank)
+• Format tanggal bisa dikustomisasi (DD/MM/YYYY, MM/DD/YYYY, YYYY/MM/DD)
 ```
 
 ---
 
-*File ini dibuat pada 1 Juni 2026 untuk OmsetKu v4.6.0*
+## 📊 DATA SAFETY FORM (Play Console)
+
+| Pertanyaan | Jawaban |
+|---|---|
+| Apakah app mengumpulkan/berbagi data pengguna? | **Ya** (kondisional) |
+| Data apa yang dikumpulkan? | Email (hanya jika Drive aktif), preferensi bahasa (lokal) |
+| Apakah data dienkripsi? | Ya |
+| Apakah pengguna bisa request hapus data? | Ya (Reset + uninstall) |
+| Apakah ada data sharing ke pihak ketiga? | Tidak |
+
+---
+
+*Terakhir update: 3 Juni 2026 untuk Omset Pintar v1.0.0*
 *Update sebelum setiap rilis ke Play Store*

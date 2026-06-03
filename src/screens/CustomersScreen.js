@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Alert, Platfo
 import { ThemeContext, getStyles } from '../theme';
 import { COLORS } from '../constants';
 import { toIdr, toShort, fmtDate, getNorm, findSimilarNames } from '../utils';
-import { PurchasesContext } from '../contexts';
+import { PurchasesContext, LanguageContext } from '../contexts';
 import { can, FREE } from '../premium';
 import { LockRow } from '../components/LockRow';
 
@@ -34,6 +34,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
   const st = getStyles(C);
   const { salesList, transactions, dateFormat } = data;
   const { purchases, openPaywall } = useContext(PurchasesContext);
+  const { t } = useContext(LanguageContext);
   const hasCustomerFull   = can.customerFull(purchases);
   const hasCustomerDetail = can.customerDetail(purchases);
   const MAX_CUSTOMERS     = hasCustomerFull ? Infinity : FREE.MAX_CUSTOMERS;
@@ -137,7 +138,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
       {/* Search + filter */}
       <View style={{ padding:14, paddingBottom:0 }}>
         <TextInput value={search} onChangeText={setSearch}
-          placeholder="🔍  Cari nama pelanggan..." placeholderTextColor={C.muted}
+          placeholder={t('search_customer')} placeholderTextColor={C.muted}
           style={[st.input, { marginBottom:10, fontSize:14 }]} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:10, maxHeight:46 }}>
           <View style={{ flexDirection:'row', gap:8 }}>
@@ -156,7 +157,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
         </ScrollView>
         {/* Sort chips */}
         <View style={{ flexDirection:'row', gap:8, marginBottom:8 }}>
-          {[['nama','A–Z'],['total','Terbesar'],['terbaru','Terbaru']].map(([key,lbl]) => (
+          {[['nama',t('sort_az')],['total',t('sort_biggest')],['terbaru',t('sort_newest')]].map(([key,lbl]) => (
             <TouchableOpacity key={key} onPress={() => setSortBy(key)}
               style={{ paddingHorizontal:12, paddingVertical:5, borderRadius:8,
                 backgroundColor: sortBy===key ? C.primary : C.input }}>
@@ -165,14 +166,14 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
           ))}
         </View>
         <Text style={{ color:C.muted, fontSize:11, marginBottom:6 }}>
-          {filtered.length} pelanggan
+          {filtered.length} {t('customers_label')}
         </Text>
         {/* Tombol cek typo */}
         <TouchableOpacity onPress={handleTypoCheck}
           style={{ flexDirection:'row', alignItems:'center', gap:6, alignSelf:'flex-start',
             backgroundColor:C.warning+'22', borderRadius:8, paddingHorizontal:10, paddingVertical:5, marginBottom:4 }}>
           <Text style={{ color:C.warning, fontSize:11, fontWeight:'700' }}>
-            {typoLoading ? 'Mengecek...' : '🔍 Cek Typo Nama'}
+            {typoLoading ? t('checking') : t('check_typo')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -183,7 +184,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
         filtered.length === 0 ? (
           <View style={{ alignItems:'center', paddingVertical:60 }}>
             <Text style={{ fontSize:40, marginBottom:12 }}>👥</Text>
-            <Text style={{ color:C.muted }}>Belum ada pelanggan</Text>
+            <Text style={{ color:C.muted }}>{t('no_customers')}</Text>
           </View>
         ) : (
           <FlatList
@@ -194,7 +195,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
             onEndReached={handleCustLoadMore}
             onEndReachedThreshold={0.3}
             ListFooterComponent={
-              <LockRow hiddenCount={hiddenCustomerCount} label="pelanggan"
+              <LockRow hiddenCount={hiddenCustomerCount} label={t('customers_label')}
                 onUnlock={() => openPaywall('customer_full')} />
             }
           />
@@ -202,7 +203,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
       ) : grouped.length === 0 ? (
         <View style={{ alignItems:'center', paddingVertical:60 }}>
           <Text style={{ fontSize:40, marginBottom:12 }}>👥</Text>
-          <Text style={{ color:C.muted }}>Belum ada pelanggan</Text>
+          <Text style={{ color:C.muted }}>{t('no_customers')}</Text>
         </View>
       ) : (
         <FlatList
@@ -224,7 +225,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
             </View>
           )}
           ListFooterComponent={
-            <LockRow hiddenCount={hiddenCustomerCount} label="pelanggan"
+            <LockRow hiddenCount={hiddenCustomerCount} label={t('customers_label')}
               onUnlock={() => openPaywall('customer_full')} />
           }
         />
@@ -236,10 +237,10 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
           <View style={[st.container, { paddingTop: Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between',
               paddingHorizontal:16, paddingVertical:12, borderBottomWidth:1, borderBottomColor:C.border }}>
-              <Text style={{ color:C.text, fontSize:17, fontWeight:'800' }}>🔍 Cek Typo Nama</Text>
+              <Text style={{ color:C.text, fontSize:17, fontWeight:'800' }}>{t('typo_modal_title')}</Text>
               <TouchableOpacity onPress={() => setShowTypo(false)}
                 style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:12, paddingVertical:6 }}>
-                <Text style={{ color:C.muted }}>✕ Tutup</Text>
+                <Text style={{ color:C.muted }}>✕ {t('close')}</Text>
               </TouchableOpacity>
             </View>
 
@@ -251,9 +252,9 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
               if (visiblePairs.length === 0) return (
                 <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
                   <Text style={{ fontSize:48, marginBottom:16 }}>✅</Text>
-                  <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>Tidak ada typo terdeteksi</Text>
+                  <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>{t('no_typo')}</Text>
                   <Text style={{ color:C.muted, fontSize:13, marginTop:8, textAlign:'center', paddingHorizontal:32 }}>
-                    Semua nama pelanggan tampak unik dan berbeda
+                    {t('no_typo_desc')}
                   </Text>
                 </View>
               );
@@ -265,8 +266,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
                 keyboardShouldPersistTaps="handled"
                 ListHeaderComponent={
                   <Text style={{ color:C.muted, fontSize:12, marginBottom:16 }}>
-                    Ditemukan {visiblePairs.length} pasangan nama yang mungkin sama.
-                    Pilih nama yang benar untuk mengganti semua transaksi.
+                    {t('typo_found', { count: visiblePairs.length })}
                   </Text>
                 }
                 renderItem={({ item: pair, index: pairIdx }) => {
@@ -283,11 +283,11 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
                           <TouchableOpacity
                             onPress={() => {
                               Alert.alert(
-                                'Ganti ke nama ini?',
+                                t('replace_confirm'),
                                 `Semua "${pair.nameB}" (${pair.countB} bon) akan diganti menjadi "${pair.nameA}"`,
                                 [
-                                  { text:'Batal', style:'cancel' },
-                                  { text:'Ya, Ganti', onPress: async () => {
+                                  { text: t('cancel'), style:'cancel' },
+                                  { text: t('replace_yes'), onPress: async () => {
                                     await onMerge(pair.nameB, pair.nameA, pair.sales);
                                     setDismissedPairs(prev => new Set([...prev, `${pair.nameA}|||${pair.nameB}`]));
                                   }},
@@ -298,7 +298,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
                               borderColor:C.primary, borderRadius:12, padding:12, alignItems:'center' }}>
                             <Text style={{ color:C.primary, fontSize:15, fontWeight:'800' }}>{pair.nameA}</Text>
                             <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{pair.countA} bon</Text>
-                            <Text style={{ color:C.primary, fontSize:10, marginTop:4, fontWeight:'700' }}>Pakai ini ✓</Text>
+                            <Text style={{ color:C.primary, fontSize:10, marginTop:4, fontWeight:'700' }}>{t('use_this')}</Text>
                           </TouchableOpacity>
                           <View style={{ alignItems:'center', justifyContent:'center', paddingHorizontal:4 }}>
                             <Text style={{ color:C.muted, fontSize:18 }}>↔</Text>
@@ -307,11 +307,11 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
                           <TouchableOpacity
                             onPress={() => {
                               Alert.alert(
-                                'Ganti ke nama ini?',
+                                t('replace_confirm'),
                                 `Semua "${pair.nameA}" (${pair.countA} bon) akan diganti menjadi "${pair.nameB}"`,
                                 [
-                                  { text:'Batal', style:'cancel' },
-                                  { text:'Ya, Ganti', onPress: async () => {
+                                  { text: t('cancel'), style:'cancel' },
+                                  { text: t('replace_yes'), onPress: async () => {
                                     await onMerge(pair.nameA, pair.nameB, pair.sales);
                                     setDismissedPairs(prev => new Set([...prev, `${pair.nameA}|||${pair.nameB}`]));
                                   }},
@@ -322,7 +322,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
                               borderColor:C.accent, borderRadius:12, padding:12, alignItems:'center' }}>
                             <Text style={{ color:C.accent, fontSize:15, fontWeight:'800' }}>{pair.nameB}</Text>
                             <Text style={{ color:C.muted, fontSize:11, marginTop:2 }}>{pair.countB} bon</Text>
-                            <Text style={{ color:C.accent, fontSize:10, marginTop:4, fontWeight:'700' }}>Pakai ini ✓</Text>
+                            <Text style={{ color:C.accent, fontSize:10, marginTop:4, fontWeight:'700' }}>{t('use_this')}</Text>
                           </TouchableOpacity>
                         </View>
                         {/* Abaikan — disimpan ke DB, tidak muncul lagi di sesi berikutnya */}
@@ -335,7 +335,7 @@ function CustomersScreen({ data, onMerge, onIgnoreTypo }) {
                             await onIgnoreTypo(pair.sales, a, b);
                           }}
                           style={{ backgroundColor:C.input, borderRadius:8, paddingVertical:8, alignItems:'center' }}>
-                          <Text style={{ color:C.muted, fontSize:12 }}>Bukan typo — Abaikan</Text>
+                          <Text style={{ color:C.muted, fontSize:12 }}>{t('not_typo')}</Text>
                         </TouchableOpacity>
                       </View>
                     );

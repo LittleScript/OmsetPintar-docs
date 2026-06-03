@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "OmsetKu",
-    "slug": "omsetku",
-    "version": "4.7.0",
+    "name": "Omset Pintar",
+    "slug": "omset-pintar",
+    "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#071018",
@@ -13,8 +13,8 @@
       "backgroundColor": "#071018"
     },
     "android": {
-      "package": "com.omsetku.app",
-      "versionCode": 24,
+      "package": "com.omsetpintar.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
@@ -28,12 +28,12 @@
       "expo-secure-store",
       "expo-notifications"
     ],
-    "owner": "aliangkoko",
+    "owner": "littlescript",
     "extra": {
       "eas": {
-        "projectId": "27500f1c-6b40-4014-be88-463faa8d9ad0"
+        "projectId": "55b614cd-0a08-43c6-998c-75bdbfd8e923"
       }
     },
-    "scheme": "com.omsetku.app"
+    "scheme": "com.omsetpintar.app"
   }
 }

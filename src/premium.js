@@ -1,5 +1,5 @@
 /**
- * OmsetKu Premium — Entitlement System
+ * Omset Pintar Premium — Entitlement System
  * Sekarang: mock via SecureStore
  * Nanti: swap ke RevenueCat CustomerInfo (minimal code change)
  */
@@ -8,16 +8,16 @@ import * as SecureStore from 'expo-secure-store';
 // ─── PRODUCT IDs ──────────────────────────────────────────────────────────────
 // Harus identik dengan Google Play Console & RevenueCat
 export const PID = {
-  SALES_UNLOCK:        'omsetku_sales_unlock',
-  SALES_PRO:           'omsetku_sales_pro',
-  SALES_ULTIMATE:      'omsetku_sales_ultimate',
-  ANALYTICS_DASHBOARD: 'omsetku_analytics_dashboard',
-  ANALYTICS_CUSTOMERS: 'omsetku_analytics_customers',
-  ANALYTICS_EXPORT:    'omsetku_analytics_export',
-  ANALYTICS_ALL:       'omsetku_analytics_all',
-  BACKUP_SYNC:         'omsetku_backup_sync',
-  MONTHLY_PLUS:        'omsetku_monthly_plus',
-  YEARLY_PLUS:         'omsetku_yearly_plus',
+  SALES_UNLOCK:        'omsetpintar_sales_unlock',
+  SALES_PRO:           'omsetpintar_sales_pro',
+  SALES_ULTIMATE:      'omsetpintar_sales_ultimate',
+  ANALYTICS_DASHBOARD: 'omsetpintar_analytics_dashboard',
+  ANALYTICS_CUSTOMERS: 'omsetpintar_analytics_customers',
+  ANALYTICS_EXPORT:    'omsetpintar_analytics_export',
+  ANALYTICS_ALL:       'omsetpintar_analytics_all',
+  BACKUP_SYNC:         'omsetpintar_backup_sync',
+  MONTHLY_PLUS:        'omsetpintar_monthly_plus',
+  YEARLY_PLUS:         'omsetpintar_yearly_plus',
 };
 
 // ─── PRODUCT CATALOG ─────────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ export const can = {
 };
 
 // ─── STORAGE (mock — nanti swap ke RevenueCat) ────────────────────────────────
-const KEY = 'omsetku_purchases_v1';
+const KEY = 'omsetpintar_purchases_v1';
 
 export const loadPurchases = async () => {
   try { return JSON.parse(await SecureStore.getItemAsync(KEY) || '{}'); }

@@ -45,8 +45,8 @@ export async function isGdriveTokenValid() {
 export async function uploadToDrive(accessToken, payload) {
   const headers = { Authorization: `Bearer ${accessToken}` };
 
-  // 1. Cari/buat folder OmsetKu Backup
-  const qFolder = encodeURIComponent(`name='OmsetKu Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  // 1. Cari/buat folder Omset Pintar Backup
+  const qFolder = encodeURIComponent(`name='Omset Pintar Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
   const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${qFolder}&fields=files(id)`, { headers });
   const folderData = await folderRes.json();
   let folderId = folderData.files?.[0]?.id;
@@ -55,15 +55,15 @@ export async function uploadToDrive(accessToken, payload) {
     const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'OmsetKu Backup', mimeType: 'application/vnd.google-apps.folder' }),
+      body: JSON.stringify({ name: 'Omset Pintar Backup', mimeType: 'application/vnd.google-apps.folder' }),
     });
     folderId = (await cr.json()).id;
   }
 
   // Gunakan nama file tetap per hari — satu file per hari, tidak berlipat-lipat
-  const filename = `omsetku-backup-${todayStr()}.json`;
+  const filename = `omsetpintar-backup-${todayStr()}.json`;
   const content  = JSON.stringify(payload, null, 2);
-  const boundary = 'omsetku_boundary';
+  const boundary = 'omsetpintar_boundary';
 
   // 2. Cek apakah file dengan nama ini sudah ada di folder
   const qFile   = encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`);
@@ -141,20 +141,27 @@ Notifications.setNotificationHandler({
 });
 
 export async function scheduleReminder(hour, forceReschedule = false) {
-  if (!forceReschedule) {
-    const existing = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
-    if (existing.some(n => n.identifier === NOTIF_TASK_ID)) return;
+  try {
+    if (!forceReschedule) {
+      const existing = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+      if (existing.some(n => n.identifier === NOTIF_TASK_ID)) return;
+    }
+    await Notifications.cancelScheduledNotificationAsync(NOTIF_TASK_ID).catch(() => {});
+    // Use SchedulableTriggerInputTypes.DAILY if available (SDK 52+)
+    const triggerType = Notifications.SchedulableTriggerInputTypes?.DAILY ?? 'daily';
+    await Notifications.scheduleNotificationAsync({
+      identifier: NOTIF_TASK_ID,
+      content: {
+        title: '📊 Omset Pintar',
+        body:  'Jangan lupa catat omset hari ini!',
+        sound: true,
+      },
+      trigger: { type: triggerType, hour, minute: 0 },
+    });
+  } catch(e) {
+    // Swallow — notification scheduling failure should not crash the app
+    console.warn('scheduleReminder error:', e?.message || e);
   }
-  await Notifications.cancelScheduledNotificationAsync(NOTIF_TASK_ID).catch(() => {});
-  await Notifications.scheduleNotificationAsync({
-    identifier: NOTIF_TASK_ID,
-    content: {
-      title: '📊 OmsetKu',
-      body:  'Jangan lupa catat omset hari ini!',
-      sound: true,
-    },
-    trigger: { type: 'daily', hour, minute: 0 },
-  });
 }
 
 export async function cancelReminder() {

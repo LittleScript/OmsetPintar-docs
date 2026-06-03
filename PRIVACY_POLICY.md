@@ -1,10 +1,10 @@
-# Kebijakan Privasi OmsetKu
+# Kebijakan Privasi Omset Pintar
 
-**Terakhir diperbarui:** 2 Juni 2026
+**Terakhir diperbarui:** 3 Juni 2026 (v1.0.0)
 
 ## 1. Pendahuluan
 
-OmsetKu ("Aplikasi") adalah aplikasi pencatatan omset harian untuk usaha mikro, kecil, dan menengah (UMKM) Indonesia. Kebijakan Privasi ini menjelaskan bagaimana Aplikasi mengumpulkan, menggunakan, menyimpan, dan melindungi informasi Anda.
+Omset Pintar ("Aplikasi") adalah aplikasi pencatatan omset harian untuk usaha mikro, kecil, dan menengah (UMKM) Indonesia. Kebijakan Privasi ini menjelaskan bagaimana Aplikasi mengumpulkan, menggunakan, menyimpan, dan melindungi informasi Anda.
 
 ---
 
@@ -19,7 +19,11 @@ OmsetKu ("Aplikasi") adalah aplikasi pencatatan omset harian untuk usaha mikro, 
 ### 2.2 Data Google (hanya jika fitur Google Drive diaktifkan)
 - **Email akun Google** disimpan lokal di SecureStore (terenkripsi)
 - **Token OAuth** (access token + refresh token) disimpan lokal di SecureStore (terenkripsi)
-- File backup diunggah ke folder "OmsetKu Backup" di **Google Drive milik Anda sendiri**
+- File backup diunggah ke folder "Omset Pintar Backup" di **Google Drive milik Anda sendiri**
+
+### 2.2a Preferensi Bahasa
+- **Pilihan bahasa** (Indonesia/English) disimpan lokal di SecureStore perangkat Anda
+- Tidak dikirim ke server mana pun
 
 ### 2.3 Data yang TIDAK Dikumpulkan
 Aplikasi ini **TIDAK** mengumpulkan:
@@ -36,8 +40,8 @@ Aplikasi ini **TIDAK** mengumpulkan:
 
 | Jenis Data | Lokasi | Akses |
 |---|---|---|
-| Transaksi & pengaturan | SQLite lokal di HP | Hanya app OmsetKu |
-| Token OAuth Google | SecureStore (terenkripsi) | Hanya app OmsetKu |
+| Transaksi & pengaturan | SQLite lokal di HP | Hanya app Omset Pintar |
+| Token OAuth Google | SecureStore (terenkripsi) | Hanya app Omset Pintar |
 | File backup | Google Drive akun Anda | Anda + yang Anda izinkan |
 
 ---
@@ -70,10 +74,10 @@ Data hanya digunakan **di dalam aplikasi** untuk:
 ## 6. Google Drive & Sinkronisasi
 
 Fitur Google Drive bersifat **sepenuhnya opsional**. Jika diaktifkan:
-- Data dibackup ke folder "OmsetKu Backup" di Google Drive **akun Anda sendiri**
+- Data dibackup ke folder "Omset Pintar Backup" di Google Drive **akun Anda sendiri**
 - Koneksi menggunakan protokol OAuth 2.0 dengan PKCE (aman, tanpa client secret)
 - Token diperbarui otomatis tanpa perlu login ulang
-- Sinkronisasi antar 2 HP menggunakan Drive sebagai perantara — bukan server OmsetKu
+- Sinkronisasi antar 2 HP menggunakan Drive sebagai perantara — bukan server Omset Pintar
 - Anda dapat mencabut izin kapan saja di: myaccount.google.com → Keamanan → Aplikasi pihak ketiga
 
 ---
@@ -105,16 +109,17 @@ Aplikasi ini ditujukan untuk penggunaan bisnis oleh orang dewasa. Kami tidak men
 
 ## 10. Perubahan Kebijakan
 
-Versi terbaru selalu tersedia di: https://littlescript.github.io/OmsetKu-docs/
+Versi terbaru selalu tersedia di: https://littlescript.github.io/OmsetPintar-docs/
 
 ---
 
 ## 11. Kontak
 
 **Email:** aliangkoko@gmail.com  
-**GitHub:** https://github.com/LittleScript/OmsetKu-docs
+**GitHub:** https://littlescript.github.io/OmsetPintar-docs/
 
 ---
 
-*Berlaku mulai OmsetKu v4.7.0*  
-*URL Online: https://littlescript.github.io/OmsetKu-docs/*
+*Berlaku mulai Omset Pintar v1.0.0*  
+*Package: com.omsetpintar.app*  
+*URL Online: https://littlescript.github.io/OmsetPintar-docs/*

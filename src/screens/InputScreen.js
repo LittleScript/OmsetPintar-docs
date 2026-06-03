@@ -5,10 +5,12 @@ import * as Haptics from 'expo-haptics';
 import { ThemeContext, getStyles, SalesChip, chipStyle, btnStyle } from '../theme';
 import { COLORS } from '../constants';
 import { todayStr, fmtDate, genBon, parseBon, getNorm, getAutocomplete, toIdr } from '../utils';
+import { LanguageContext } from '../contexts';
 
 function InputScreen({ data, onSave, dirtyRef }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
+  const { t } = useContext(LanguageContext);
 
   const { salesList, transactions, lastSales, lastDate, nextSeq, bonConfig, dateFormat } = data;
 
@@ -116,11 +118,11 @@ function InputScreen({ data, onSave, dirtyRef }) {
     if (duplicate) {
       setSaving(false);
       Alert.alert(
-        '⚠️ Mungkin Double Input',
+        t('duplicate_title'),
         `Sudah ada bon ${duplicate.bonNumber} untuk:\n"${duplicate.customerName}" · ${toIdr(duplicate.amount)}\npada ${fmtDate(duplicate.date, dateFormat)}\n\nYakin mau simpan lagi?`,
         [
-          { text: 'Cek Dulu', style: 'cancel' },
-          { text: 'Simpan Tetap', onPress: () => { setSaving(true); doSave(tx); } },
+          { text: t('check_first'), style: 'cancel' },
+          { text: t('save_anyway'), onPress: () => { setSaving(true); doSave(tx); } },
         ]
       );
       return;
@@ -140,7 +142,7 @@ function InputScreen({ data, onSave, dirtyRef }) {
         {/* Bon number */}
         <View style={[st.card, { paddingVertical:14 }]}>
           <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1, textTransform:'uppercase', marginBottom:8, textAlign:'center' }}>
-            NO. BON  (tap angka untuk edit)
+            {t('no_bon')}
           </Text>
           <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
             <TouchableOpacity
@@ -201,7 +203,7 @@ function InputScreen({ data, onSave, dirtyRef }) {
 
         {/* Date */}
         <View style={{ marginBottom:14 }}>
-          <Text style={st.label}>📅 Tanggal</Text>
+          <Text style={st.label}>{t('date_label')}</Text>
           <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
             <TouchableOpacity
               onPress={handleDatePrev}
@@ -240,7 +242,7 @@ function InputScreen({ data, onSave, dirtyRef }) {
 
         {/* Sales */}
         <View style={{ marginBottom:14 }}>
-          <Text style={st.label}>Sales</Text>
+          <Text style={st.label}>{t('sales_label')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {salesList.map((sl, i) => (
               <SalesChip key={sl} name={sl} active={sales===sl}
@@ -251,12 +253,12 @@ function InputScreen({ data, onSave, dirtyRef }) {
 
         {/* Customer + autocomplete */}
         <View style={{ marginBottom:14 }}>
-          <Text style={st.label}>Nama Pelanggan ({sales})</Text>
+          <Text style={st.label}>{t('customer_label')} ({sales})</Text>
           <TextInput
             ref={customerRef}
             value={customer}
             onChangeText={v => { setCustomer(v); setSuggestDismissed(false); }}
-            placeholder={`Pelanggan ${sales}...`} placeholderTextColor={C.muted}
+            placeholder={`${t('customer_hint')} ${sales}...`} placeholderTextColor={C.muted}
             style={[st.input, customer && { borderColor:salesColor }]}
             autoCorrect={false} autoCapitalize="words"
             returnKeyType="next"
@@ -280,7 +282,7 @@ function InputScreen({ data, onSave, dirtyRef }) {
 
         {/* Amount */}
         <View style={{ marginBottom:14 }}>
-          <Text style={st.label}>Total Belanja (Rp)</Text>
+          <Text style={st.label}>{t('amount_label')}</Text>
           <TextInput ref={amtRef}
             value={amount} onChangeText={v => setAmount(v.replace(/\D/g,''))}
             keyboardType="number-pad" placeholder="0" placeholderTextColor={C.muted}
@@ -295,16 +297,16 @@ function InputScreen({ data, onSave, dirtyRef }) {
 
         {/* Notes */}
         <View style={{ marginBottom:22 }}>
-          <Text style={st.label}>Catatan (opsional)</Text>
+          <Text style={st.label}>{t('notes_label')}</Text>
           <TextInput value={notes} onChangeText={setNotes}
-            placeholder="..." placeholderTextColor={C.muted} style={st.input} />
+            placeholder={t('notes_hint')} placeholderTextColor={C.muted} style={st.input} />
         </View>
 
         {/* Save */}
         <TouchableOpacity onPress={handleSave} disabled={!canSave || saving}
           style={[btnStyle(justSaved ? C.success : canSave ? salesColor : C.input), !canSave && { opacity:0.4 }]}>
           <Text style={{ color: canSave ? '#fff' : C.muted, fontSize:16, fontWeight:'800' }}>
-            {saving ? 'Menyimpan...' : justSaved ? '✓  TERSIMPAN!' : 'SIMPAN BON →'}
+            {saving ? t('saving') : justSaved ? t('saved') : t('save_bon')}
           </Text>
         </TouchableOpacity>
       </ScrollView>

@@ -5,7 +5,7 @@ import * as Sharing from 'expo-sharing';
 import { ThemeContext, getStyles, SalesChip, btnStyle, KpiCard } from '../theme';
 import { COLORS, MONTHS, MONTHS_F } from '../constants';
 import { toIdr, toShort, todayStr, fmtDate, getWeekBounds } from '../utils';
-import { PurchasesContext } from '../contexts';
+import { PurchasesContext, LanguageContext } from '../contexts';
 import { can, FREE } from '../premium';
 import { PaywallOverlay } from '../components/PaywallOverlay';
 
@@ -24,10 +24,197 @@ function PctTag({ pct, C }) {
   );
 }
 
+// ── Daily Line Chart — omset harian per sales dalam 1 bulan ────────────────────
+function DailyLineChart({ activeTxns, salesList, month, year, setMonth, setYear, C, st, t }) {
+  const CHART_H = 100;
+  const screenW = Dimensions.get('window').width - 32 - 32; // card padding
+
+  // Hitung hari dalam bulan
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const ymStr = `${year}-${String(month).padStart(2,'0')}`;
+
+  // Omset per hari per sales
+  const dailyData = useMemo(() => {
+    const map = {}; // salesName → [day1Total, day2Total, ...]
+    salesList.forEach(s => { map[s] = Array(daysInMonth).fill(0); });
+    activeTxns.forEach(tx => {
+      if (!tx.date.startsWith(ymStr)) return;
+      const day = parseInt(tx.date.slice(8, 10), 10) - 1; // 0-indexed
+      if (day >= 0 && day < daysInMonth && map[tx.sales]) {
+        map[tx.sales][day] += tx.amount;
+      }
+    });
+    return map;
+  }, [activeTxns, salesList, ymStr, daysInMonth]);
+
+  // Nilai max untuk normalisasi
+  const globalMax = useMemo(() => {
+    let mx = 0;
+    Object.values(dailyData).forEach(arr => arr.forEach(v => { if (v > mx) mx = v; }));
+    return mx || 1;
+  }, [dailyData]);
+
+  // Prev / next month
+  const prevMonth = () => {
+    let m = month - 1, y = year;
+    if (m < 1) { m = 12; y--; }
+    setMonth(m); setYear(y);
+  };
+  const nextMonth = () => {
+    let m = month + 1, y = year;
+    if (m > 12) { m = 1; y++; }
+    setMonth(m); setYear(y);
+  };
+
+  const hasData = globalMax > 1;
+  const monthName = MONTHS_F[month - 1];
+
+  // Build polyline points for each sales
+  const buildPoints = (arr) => {
+    const step = screenW / Math.max(daysInMonth - 1, 1);
+    return arr.map((v, i) => ({
+      x: i * step,
+      y: CHART_H - (v / globalMax) * CHART_H * 0.9,
+    }));
+  };
+
+  return (
+    <View style={st.card}>
+      {/* Header + month nav */}
+      <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+        <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase' }}>
+          {t('omset_dist')}
+        </Text>
+        <View style={{ flexDirection:'row', alignItems:'center', gap:6 }}>
+          <TouchableOpacity onPress={prevMonth}
+            style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:10, paddingVertical:4 }}>
+            <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>‹</Text>
+          </TouchableOpacity>
+          <Text style={{ color:C.accent, fontSize:13, fontWeight:'800', minWidth:80, textAlign:'center' }}>
+            {monthName} {year}
+          </Text>
+          <TouchableOpacity onPress={nextMonth}
+            style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:10, paddingVertical:4 }}>
+            <Text style={{ color:C.text, fontSize:16, fontWeight:'700' }}>›</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Legend */}
+      {salesList.length > 1 && (
+        <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8, marginBottom:8 }}>
+          {salesList.map((s, i) => (
+            <View key={s} style={{ flexDirection:'row', alignItems:'center', gap:4 }}>
+              <View style={{ width:16, height:3, borderRadius:2, backgroundColor:COLORS[i % COLORS.length] }} />
+              <Text style={{ color:C.muted, fontSize:10 }}>{s}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* SVG-like line chart using absolute-positioned Views */}
+      {!hasData ? (
+        <Text style={{ color:C.muted, fontSize:12, textAlign:'center', paddingVertical:12 }}>{t('no_data')}</Text>
+      ) : (
+        <View style={{ height: CHART_H + 20, position:'relative', marginBottom:4 }}>
+          {/* Horizontal grid lines */}
+          {[0, 0.25, 0.5, 0.75, 1].map(pct => (
+            <View key={pct} style={{
+              position:'absolute', left:0, right:0,
+              top: CHART_H * (1 - pct * 0.9) - 1,
+              height:1, backgroundColor: C.border + '66'
+            }} />
+          ))}
+          {/* Line segments per sales */}
+          {salesList.map((s, si) => {
+            const pts = buildPoints(dailyData[s] || []);
+            const color = COLORS[si % COLORS.length];
+            return (
+              <React.Fragment key={`lines_${s}`}>
+                {pts.slice(0, -1).map((p, i) => {
+                  const next = pts[i + 1];
+                  const dx = next.x - p.x;
+                  const dy = next.y - p.y;
+                  const len = Math.sqrt(dx * dx + dy * dy);
+                  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                  if (dailyData[s][i] === 0 && dailyData[s][i+1] === 0) return null;
+                  return (
+                    <View key={`${s}_${i}`} style={{
+                      position:'absolute',
+                      left: p.x + dx/2 - len/2, top: p.y + dy/2 - 1.25,
+                      width: len, height: 2.5,
+                      backgroundColor: color,
+                      borderRadius: 2,
+                      transform: [{ rotate: `${angle}deg` }],
+                      opacity: 0.85,
+                    }} />
+                  );
+                })}
+              </React.Fragment>
+            );
+          })}
+          {/* Dots at data points with non-zero values */}
+          {salesList.map((s, si) => {
+            const pts = buildPoints(dailyData[s] || []);
+            const color = COLORS[si % COLORS.length];
+            return (
+              <React.Fragment key={`dots_${s}`}>
+                {pts.map((p, i) => {
+                  if (!dailyData[s][i]) return null;
+                  return (
+                    <View key={`dot_${s}_${i}`} style={{
+                      position:'absolute',
+                      left: p.x - 3, top: p.y - 3,
+                      width: 6, height: 6, borderRadius: 3,
+                      backgroundColor: color,
+                      borderWidth: 1.5, borderColor: C.card,
+                    }} />
+                  );
+                })}
+              </React.Fragment>
+            );
+          })}
+          {/* X-axis day labels — setiap 5 hari */}
+          {Array.from({ length: daysInMonth }, (_, i) => i + 1)
+            .filter(d => d === 1 || d % 5 === 0 || d === daysInMonth)
+            .map(d => {
+              const step = screenW / Math.max(daysInMonth - 1, 1);
+              return (
+                <Text key={d} style={{
+                  position:'absolute', left: (d-1) * step - 8,
+                  top: CHART_H + 4, color: C.muted, fontSize: 8
+                }}>{d}</Text>
+              );
+            })
+          }
+        </View>
+      )}
+
+      {/* Total bulan ini */}
+      {hasData && (() => {
+        const monthTotal = activeTxns
+          .filter(tx => tx.date.startsWith(ymStr))
+          .reduce((a, t) => a + t.amount, 0);
+        const monthCount = activeTxns.filter(tx => tx.date.startsWith(ymStr)).length;
+        return (
+          <View style={{ borderTopWidth:1, borderTopColor:C.border, paddingTop:8, marginTop:4 }}>
+            <View style={{ flexDirection:'row', justifyContent:'space-between' }}>
+              <Text style={{ color:C.muted, fontSize:11 }}>{t('total_omset')} {monthName}</Text>
+              <Text style={[st.mono, { color:C.accent, fontSize:13, fontWeight:'800' }]}>{toShort(monthTotal)}</Text>
+            </View>
+            <Text style={{ color:C.muted, fontSize:10, marginTop:2 }}>{monthCount} {t('bon')}</Text>
+          </View>
+        );
+      })()}
+    </View>
+  );
+}
+
 function DashboardScreen({ data, onYearChange }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
   const { purchases, openPaywall } = useContext(PurchasesContext);
+  const { t, lang } = useContext(LanguageContext);
   const hasDashPct   = can.dashboardPct(purchases);
   const hasHariTsb   = can.hariTersibuk(purchases);
   const hasChartFull = can.chartFull(purchases);
@@ -35,6 +222,8 @@ function DashboardScreen({ data, onYearChange }) {
 
   const { salesList, transactions, activeYear, dateFormat } = data;
   const [busyMonthFilter,  setBusyMonthFilter]  = useState(0);
+  const [lineChartMonth,   setLineChartMonth]   = useState(() => new Date().getMonth()+1); // 1-12
+  const [lineChartYear,    setLineChartYear]    = useState(() => new Date().getFullYear());
   const [showShareModal,   setShowShareModal]    = useState(false);
   const [shareType,        setShareType]         = useState('hari');
   const [shareDay,         setShareDay]          = useState(() => todayStr());
@@ -45,7 +234,9 @@ function DashboardScreen({ data, onYearChange }) {
   const [showShareDatePicker, setShowShareDatePicker] = useState(false);
   const rekapCardRef = useRef(null);
 
-  const DAY_NAMES_ID = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+  const DAY_NAMES_ID = lang === 'en'
+    ? ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+    : ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
 
   const activeTxns = useMemo(() =>
     (transactions || []).filter(t => !t.deletedAt), [transactions]);
@@ -152,7 +343,7 @@ function DashboardScreen({ data, onYearChange }) {
       try {
         const uri = await captureRef(rekapCardRef, { format:'png', quality:1 });
         await Sharing.shareAsync(uri, {
-          mimeType:'image/png', dialogTitle:'Bagikan Rekap OmsetKu'
+          mimeType:'image/png', dialogTitle:'Bagikan Rekap Omset Pintar'
         });
         return;
       } catch(_) {} // fallback ke teks jika gagal
@@ -180,7 +371,7 @@ function DashboardScreen({ data, onYearChange }) {
       });
       lines.push('');
     }
-    lines.push('_via OmsetKu_');
+    lines.push('_via Omset Pintar_');
     try { await Share.share({ message: lines.join('\n') }); } catch(e) {}
   };
 
@@ -194,7 +385,7 @@ function DashboardScreen({ data, onYearChange }) {
           <Text style={{ color:C.text, fontSize:20 }}>‹</Text>
         </TouchableOpacity>
         <View style={{ alignItems:'center' }}>
-          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1 }}>TAHUN</Text>
+          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:1 }}>{t('year_label')}</Text>
           <Text style={[st.mono, { color:C.accent, fontSize:34, fontWeight:'800' }]}>
             {activeYear}
           </Text>
@@ -210,13 +401,13 @@ function DashboardScreen({ data, onYearChange }) {
         {/* Header row: label + share button */}
         <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
           <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase' }}>
-            HARI INI · {fmtDate(today, dateFormat)}
+            {t('today_label')} · {fmtDate(today, dateFormat)}
           </Text>
           <TouchableOpacity
             onPress={() => setShowShareModal(true)}
             style={{ backgroundColor:C.primary+'22', borderRadius:8, paddingHorizontal:10, paddingVertical:5,
               borderWidth:1, borderColor:C.primary+'44' }}>
-            <Text style={{ color:C.primary, fontSize:12, fontWeight:'700' }}>📤 Share Rekap</Text>
+            <Text style={{ color:C.primary, fontSize:12, fontWeight:'700' }}>{t('share_rekap')}</Text>
           </TouchableOpacity>
         </View>
         <View style={{ flexDirection:'row', justifyContent:'space-between', marginBottom:8 }}>
@@ -232,11 +423,11 @@ function DashboardScreen({ data, onYearChange }) {
                 </TouchableOpacity>
             }
             {hasDashPct && dayPct !== null && (
-              <Text style={{ color:C.muted, fontSize:9 }}>vs kemarin</Text>
+              <Text style={{ color:C.muted, fontSize:9 }}>{t('vs_yesterday')}</Text>
             )}
           </View>
           <View style={{ alignItems:'flex-end' }}>
-            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase' }}>MINGGU INI</Text>
+            <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', textTransform:'uppercase' }}>{t('this_week')}</Text>
             <Text style={[st.mono, { color:C.text, fontSize:18, fontWeight:'800' }]}>
               {toShort(weekTotal)}
             </Text>
@@ -248,7 +439,7 @@ function DashboardScreen({ data, onYearChange }) {
                 </TouchableOpacity>
             }
             {hasDashPct && weekPct !== null && (
-              <Text style={{ color:C.muted, fontSize:9 }}>vs minggu lalu</Text>
+              <Text style={{ color:C.muted, fontSize:9 }}>{t('vs_last_week')}</Text>
             )}
           </View>
         </View>
@@ -264,14 +455,14 @@ function DashboardScreen({ data, onYearChange }) {
 
       {/* KPIs */}
       <View style={{ flexDirection:'row', gap:8, marginBottom:12 }}>
-        <KpiCard label="Total Omset" value={toIdr(yearTotal)} sub={yearCount+' bon'} color={C.accent} />
-        <KpiCard label="Rata-rata"   value={toIdr(yearCount>0?Math.round(yearTotal/yearCount):0)} sub="per bon" />
+        <KpiCard label={t('total_omset')} value={toIdr(yearTotal)} sub={yearCount+' '+t('bon')} color={C.accent} />
+        <KpiCard label={t('avg_per_bon')} value={toIdr(yearCount>0?Math.round(yearTotal/yearCount):0)} sub={t('per_bon')} />
       </View>
 
       {/* Per-sales breakdown */}
       <View style={st.card}>
         <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-          OMSET PER SALES {activeYear}
+          {t('sales_omset')} {activeYear}
         </Text>
         {bySales.map(bs => (
           <View key={bs.name} style={{ marginBottom:10 }}>
@@ -298,7 +489,7 @@ function DashboardScreen({ data, onYearChange }) {
       {yearTotal > 0 && (
         <View style={st.card}>
           <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-            GRAFIK BULANAN {activeYear}
+            {t('monthly_chart')} {activeYear}
           </Text>
           {/* Legend */}
           {salesList.length > 1 && (
@@ -350,43 +541,27 @@ function DashboardScreen({ data, onYearChange }) {
         </View>
       )}
 
-      {/* Distribusi Omset (Pie style) */}
-      {yearTotal > 0 && salesList.length > 1 && (
-        <View style={st.card}>
-          <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:12 }}>
-            DISTRIBUSI OMSET {activeYear}
-          </Text>
-          {/* Proportion bar */}
-          <View style={{ height:18, borderRadius:9, overflow:'hidden', flexDirection:'row', marginBottom:14 }}>
-            {bySales.filter(bs => bs.total > 0).map(bs => (
-              <View key={bs.name} style={{ flex:bs.total, backgroundColor:bs.color }} />
-            ))}
-          </View>
-          {bySales.map(bs => (
-            <View key={bs.name} style={{ flexDirection:'row', alignItems:'center', marginBottom:8 }}>
-              <View style={{ width:10, height:10, borderRadius:5, backgroundColor:bs.color, marginRight:8 }} />
-              <Text style={{ color:C.text, fontSize:13, flex:1, fontWeight:'600' }}>{bs.name}</Text>
-              <Text style={{ color:C.muted, fontSize:12, marginRight:10 }}>
-                {yearTotal > 0 ? Math.round(bs.total / yearTotal * 100) : 0}%
-              </Text>
-              <Text style={[st.mono, { color:bs.color, fontSize:13, fontWeight:'800' }]}>
-                {toShort(bs.total)}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
+      {/* ── Daily Line Chart per Sales ── */}
+      {yearTotal > 0 && <DailyLineChart
+        activeTxns={activeTxns}
+        salesList={salesList}
+        month={lineChartMonth}
+        year={lineChartYear}
+        setMonth={setLineChartMonth}
+        setYear={setLineChartYear}
+        C={C} st={st} t={t}
+      />}
 
       {/* Hari Tersibuk — FREE: blur overlay */}
       {yearTotal > 0 && (
         <View style={st.card}>
           <Text style={{ color:C.muted, fontSize:10, fontWeight:'700', letterSpacing:0.8, textTransform:'uppercase', marginBottom:8 }}>
-            HARI TERSIBUK — {busyMonthFilter === 0 ? `ALL ${activeYear}` : `${MONTHS_F[busyMonthFilter-1]} ${activeYear}`}
+            {t('busiest_day')} — {busyMonthFilter === 0 ? `ALL ${activeYear}` : `${MONTHS_F[busyMonthFilter-1]} ${activeYear}`}
           </Text>
           <PaywallOverlay
             locked={!hasHariTsb}
             featureKey="hari_tersibuk"
-            subtitle="Lihat hari paling ramai toko Anda sepanjang tahun"
+            subtitle={t('busiest_hint')}
             onUnlock={() => openPaywall('hari_tersibuk')}
             minHeight={200}>
             {/* Filter bulan */}
@@ -398,14 +573,14 @@ function DashboardScreen({ data, onYearChange }) {
                     style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:8, marginRight:6,
                       backgroundColor: active ? C.accent : C.input }}>
                     <Text style={{ color: active ? '#fff' : C.muted, fontSize:11, fontWeight:'700' }}>
-                      {m === 0 ? 'All' : MONTHS[m-1]}
+                      {m === 0 ? t('all') : MONTHS[m-1]}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
             {busyBaseTxns.length === 0 ? (
-              <Text style={{ color:C.muted, fontSize:12, textAlign:'center', paddingVertical:8 }}>Belum ada data</Text>
+              <Text style={{ color:C.muted, fontSize:12, textAlign:'center', paddingVertical:8 }}>{t('no_data')}</Text>
             ) : busyDays.map((d, i) => {
               const pct = busyMax > 0 ? d.total / busyMax : 0;
               const isBusiest = d.total === busyMax && busyMax > 0;
@@ -436,17 +611,17 @@ function DashboardScreen({ data, onYearChange }) {
             {/* Header */}
             <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center',
               paddingHorizontal:16, paddingVertical:12, borderBottomWidth:1, borderBottomColor:C.border }}>
-              <Text style={{ color:C.text, fontSize:17, fontWeight:'800' }}>📤 Bagikan Rekap</Text>
+              <Text style={{ color:C.text, fontSize:17, fontWeight:'800' }}>{t('share_title')}</Text>
               <TouchableOpacity onPress={() => setShowShareModal(false)}
                 style={{ backgroundColor:C.input, borderRadius:8, paddingHorizontal:12, paddingVertical:6 }}>
-                <Text style={{ color:C.muted }}>✕ Tutup</Text>
+                <Text style={{ color:C.muted }}>✕ {t('close')}</Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView contentContainerStyle={{ padding:16, paddingBottom:40 }}>
               {/* Tab selector */}
               <View style={{ flexDirection:'row', gap:6, marginBottom:16 }}>
-                {[['hari','Hari'],['minggu','Minggu'],['bulan','Bulan'],['tahun','Tahun']].map(([v,l]) => (
+                {[['hari', t('day_tab')],['minggu', t('week_tab')],['bulan', t('month_tab')],['tahun', t('year_tab')]].map(([v,l]) => (
                   <TouchableOpacity key={v} onPress={() => setShareType(v)}
                     style={{ flex:1, paddingVertical:9, borderRadius:10, alignItems:'center',
                       backgroundColor: shareType===v ? C.primary : C.input }}>
@@ -472,7 +647,7 @@ function DashboardScreen({ data, onYearChange }) {
                     <Text style={{ color:C.text, fontSize:15, fontWeight:'700', marginTop:2 }}>
                       {fmtDate(shareDay, dateFormat)}
                     </Text>
-                    <Text style={{ color:C.muted, fontSize:10, marginTop:3 }}>tap untuk pilih tanggal</Text>
+                    <Text style={{ color:C.muted, fontSize:10, marginTop:3 }}>{t('tap_select_date')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => {
                     const d = new Date(shareDay+'T12:00:00'); d.setDate(d.getDate()+1);
@@ -492,7 +667,7 @@ function DashboardScreen({ data, onYearChange }) {
                     <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
                       {fmtDate(shareWeekBounds.mon, dateFormat)}
                     </Text>
-                    <Text style={{ color:C.muted, fontSize:11, marginVertical:2 }}>sampai</Text>
+                    <Text style={{ color:C.muted, fontSize:11, marginVertical:2 }}>{t('to_label')}</Text>
                     <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
                       {fmtDate(shareWeekBounds.sun, dateFormat)}
                     </Text>
@@ -545,10 +720,13 @@ function DashboardScreen({ data, onYearChange }) {
                   flexDirection:'row', alignItems:'center', justifyContent:'space-between',
                   borderBottomWidth:1, borderBottomColor:'#dcfce7' }}>
                   <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
-                    <Image source={require('../../assets/logo_header.png')}
-                      style={{ width:28, height:28 }} />
+                    <View style={{ width:32, height:32, borderRadius:8, backgroundColor:'#16a34a',
+                      alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
+                      <Image source={require('../../assets/logo_header.png')}
+                        style={{ width:28, height:28, borderRadius:4 }} />
+                    </View>
                     <Text style={{ color:'#16a34a', fontSize:14, fontWeight:'800', letterSpacing:0.5 }}>
-                      OmsetKu
+                      {t('rekap_header_title')}
                     </Text>
                   </View>
                   <Text style={{ color:'#64748b', fontSize:10, fontWeight:'600' }}>
@@ -572,7 +750,7 @@ function DashboardScreen({ data, onYearChange }) {
                   <View style={{ backgroundColor:'#f0fdf4', borderRadius:12, padding:14,
                     alignItems:'center', marginBottom:14 }}>
                     <Text style={{ color:'#64748b', fontSize:9, letterSpacing:1.5,
-                      textTransform:'uppercase', marginBottom:4 }}>TOTAL OMSET</Text>
+                      textTransform:'uppercase', marginBottom:4 }}>{t('total_omset_label')}</Text>
                     {sharePreview.txns.length > 0 ? (
                       <>
                         <Text style={{ color:'#16a34a', fontSize:28, fontWeight:'800',
@@ -585,7 +763,7 @@ function DashboardScreen({ data, onYearChange }) {
                       </>
                     ) : (
                       <Text style={{ color:'#94a3b8', fontSize:12, fontStyle:'italic', marginVertical:8 }}>
-                        Tidak ada transaksi
+                        {t('no_transactions')}
                       </Text>
                     )}
                   </View>
@@ -623,7 +801,7 @@ function DashboardScreen({ data, onYearChange }) {
                 <View style={{ backgroundColor:'#f8fafc', paddingHorizontal:16, paddingVertical:8,
                   borderTopWidth:1, borderTopColor:'#f1f5f9', flexDirection:'row',
                   justifyContent:'space-between', alignItems:'center' }}>
-                  <Text style={{ color:'#94a3b8', fontSize:9 }}>via OmsetKu</Text>
+                  <Text style={{ color:'#94a3b8', fontSize:9 }}>{t('via_app')}</Text>
                   <Text style={{ color:'#94a3b8', fontSize:9 }}>
                     {new Date().toLocaleDateString('id-ID',
                       { day:'numeric', month:'short', year:'numeric',
@@ -639,7 +817,7 @@ function DashboardScreen({ data, onYearChange }) {
                   sharePreview.txns.length === 0 && { opacity:0.4 }]}>
                 <Text style={{ color: sharePreview.txns.length > 0 ? '#fff' : C.muted,
                   fontSize:16, fontWeight:'800' }}>
-                  {hasShareKartu ? '📤  Bagikan sebagai Gambar' : '📤  Bagikan (Teks)  🔒 Gambar'}
+                  {hasShareKartu ? t('share_image_btn') : t('share_text_btn')}
                 </Text>
               </TouchableOpacity>
             </ScrollView>

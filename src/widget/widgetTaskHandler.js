@@ -1,7 +1,7 @@
 import React from 'react';
 import { getDb } from '../db';
 import { COLORS } from '../constants';
-import { OmsetKuWidget } from './OmsetKuWidget';
+import { OmsetPintarWidget } from './OmsetPintarWidget';
 
 // Handler ini dipanggil Android saat widget perlu di-render
 // (WIDGET_ADDED, WIDGET_UPDATE, WIDGET_RESIZED, WIDGET_DELETED, WIDGET_CLICK)
@@ -52,10 +52,10 @@ async function widgetTaskHandler(props) {
     const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
     renderWidget(
-      <OmsetKuWidget
+      <OmsetPintarWidget
         todayTotal  = {row?.total  || 0}
         todayCount  = {row?.cnt    || 0}
-        companyName = {settings?.company_name || 'OmsetKu'}
+        companyName = {settings?.company_name || 'Omset Pintar'}
         salesLines  = {salesLines}
         lastUpdated = {now}
       />
@@ -63,10 +63,10 @@ async function widgetTaskHandler(props) {
   } catch(e) {
     // Fallback jika DB belum siap (install baru / app belum pernah dibuka)
     renderWidget(
-      <OmsetKuWidget
+      <OmsetPintarWidget
         todayTotal={0}
         todayCount={0}
-        companyName="OmsetKu"
+        companyName="Omset Pintar"
         lastUpdated="Buka app untuk mulai"
       />
     );

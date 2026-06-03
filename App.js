@@ -1,5 +1,5 @@
 /**
- * OmsetKu — App.js v4.6.0
+ * Omset Pintar — App.js v4.6.0
  * Entry point: imports dari src/, render App component
  */
 
@@ -43,7 +43,8 @@ import {
   loadPurchases, savePurchases, can, getMaxSales, FREE,
 } from './src/premium';
 import { PaywallSheet }      from './src/components/PaywallSheet';
-import { PurchasesContext }  from './src/contexts'; // shared context, no circular import
+import { PurchasesContext, LanguageContext } from './src/contexts';
+import { makeT } from './src/i18n';
 
 // ── screens ───────────────────────────────────────────────────────────────────
 // Widget (react-native-android-widget) dinonaktifkan — butuh Expo 54+
@@ -72,7 +73,8 @@ export default function App() {
   const [showSett,      setShowSett]      = useState(false);
   const [refreshSignal,  setRefreshSignal]  = useState(0);
   const [purchases,      setPurchases]      = useState({});
-  const [paywallKey,     setPaywallKey]     = useState(null); // key fitur yang di-tap
+  const [paywallKey,     setPaywallKey]     = useState(null);
+  const [lang,           setLang]           = useState('id'); // 'id' | 'en'
   const inputDirtyRef = useRef(false);
   const [saveState,setSaveState]= useState('idle');
   const systemScheme = useColorScheme();
@@ -114,8 +116,22 @@ export default function App() {
 
   // Load purchases on startup
   useEffect(() => {
-    loadPurchases().then(setPurchases).catch(() => {}); // SecureStore error → fallback ke {}
+    loadPurchases().then(setPurchases).catch(() => {});
+    // Load saved language preference
+    SecureStore.getItemAsync('app_lang').then(v => { if (v === 'en') setLang('en'); }).catch(() => {});
   }, []);
+
+  // Memoize t() — rebuild hanya saat lang berubah
+  const tFn = useMemo(() => makeT(lang), [lang]);
+
+  const langCtxValue = useMemo(() => ({
+    lang,
+    t: tFn,
+    setLang: async (newLang) => {
+      setLang(newLang);
+      await SecureStore.setItemAsync('app_lang', newLang).catch(() => {});
+    },
+  }), [lang, tFn]);
 
   const openPaywall   = useCallback((featureKey) => setPaywallKey(featureKey), []);
   const handlePurchase = useCallback(async (productId) => {
@@ -126,9 +142,9 @@ export default function App() {
       await savePurchases(updated);
       setPurchases(updated);
       setPaywallKey(null);
-      Alert.alert('✅ Berhasil', 'Fitur berhasil diaktifkan!');
+      Alert.alert(tFn('success'), tFn('feature_unlocked'));
     } catch(e) {
-      Alert.alert('Error', 'Gagal menyimpan pembelian: ' + String(e));
+      Alert.alert('Error', tFn('purchase_error') + ' ' + String(e));
     }
   }, [purchases]);
 
@@ -265,9 +281,9 @@ export default function App() {
           });
         } catch(_) {}
 
-        Alert.alert('✅ Google Drive Terhubung', `Backup otomatis aktif untuk:\n${info.email}`);
+        Alert.alert(tFn('drive_connected'), tFn('drive_active_email', { email: info.email }));
       } catch(e) {
-        Alert.alert('Gagal Hubungkan Drive', String(e));
+        Alert.alert(tFn('drive_connect_fail'), String(e));
       }
     })();
   }, [gResponse]);
@@ -277,17 +293,17 @@ export default function App() {
     const valid = await isGdriveTokenValid();
     if (!valid) {
       Alert.alert(
-        '⚠️ Sesi Expired',
-        'Token Google Drive sudah kadaluarsa. Silakan reconnect untuk melanjutkan backup.',
+        tFn('session_expired'),
+        tFn('session_expired_d'),
         [
-          { text: 'Batal', style: 'cancel' },
+          { text: tFn('cancel'), style: 'cancel' },
           { text: '🔗 Reconnect', onPress: () => gRequest && gPromptAsync() },
         ]
       );
       return;
     }
     const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
-    if (!token) { Alert.alert('','Hubungkan Google Drive dulu di Settings'); return; }
+    if (!token) { Alert.alert('', 'Hubungkan Google Drive dulu di Settings'); return; }
     try {
       setDriveSyncing(true);
       const db      = await getDb();
@@ -296,19 +312,19 @@ export default function App() {
       await SecureStore.setItemAsync(GDRIVE_LAST_BACKUP_KEY, String(Date.now()));
       const now = new Date().toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit' });
       setDriveLastSync(now);
-      Alert.alert('✅ Backup Berhasil', `Data tersimpan ke Google Drive\nJam ${now}`);
+      Alert.alert(tFn('backup_success'), tFn('backup_success_msg', { time: now }));
     } catch(e) {
-      Alert.alert('Backup Gagal', String(e));
+      Alert.alert(tFn('backup_fail'), String(e));
     } finally {
       setDriveSyncing(false);
     }
   };
 
   const handleDisconnectDrive = () => {
-    Alert.alert('Putus Google Drive?', 'Backup otomatis akan berhenti.',
+    Alert.alert(tFn('disconnect_drive'), tFn('disconnect_desc'),
       [
-        { text: 'Batal', style: 'cancel' },
-        { text: 'Putuskan', style: 'destructive', onPress: async () => {
+        { text: tFn('cancel'), style: 'cancel' },
+        { text: tFn('disconnect_btn'), style: 'destructive', onPress: async () => {
           await SecureStore.deleteItemAsync(GDRIVE_TOKEN_KEY);
           await SecureStore.deleteItemAsync(GDRIVE_REFRESH_KEY).catch(() => {});
           await SecureStore.deleteItemAsync(GDRIVE_EXPIRY_KEY).catch(() => {});
@@ -350,14 +366,14 @@ export default function App() {
       const enrolled = await LocalAuthentication.isEnrolledAsync();
       if (!hasHw || !enrolled) { setIsLocked(false); return; }
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage:          'Verifikasi untuk masuk OmsetKu',
-        fallbackLabel:          'Gunakan PIN HP',
-        cancelLabel:            'Batal',
+        promptMessage:          tFn('lock_biometric'),
+        fallbackLabel:          tFn('lock_pin_fallback'),
+        cancelLabel:            tFn('cancel'),
         disableDeviceFallback:  false,
       });
       if (result.success) setIsLocked(false);
     } catch(e) { setIsLocked(false); }
-  }, []);
+  }, [tFn]);
 
   // Auto-prompt saat lock screen muncul
   useEffect(() => {
@@ -368,11 +384,11 @@ export default function App() {
   const handleTabChange = (newTab) => {
     if (tab === 'input' && newTab !== 'input' && inputDirtyRef.current) {
       Alert.alert(
-        'Input Belum Tersimpan',
-        'Ada nama / nominal yang belum disimpan. Yakin mau pindah?',
+        tFn('unsaved_title'),
+        tFn('unsaved_desc'),
         [
-          { text: 'Batal', style: 'cancel' },
-          { text: 'Pindah Saja', style: 'destructive', onPress: () => setTab(newTab) },
+          { text: tFn('cancel'), style: 'cancel' },
+          { text: tFn('move_anyway'), style: 'destructive', onPress: () => setTab(newTab) },
         ]
       );
       return;
@@ -389,7 +405,7 @@ export default function App() {
         return true;
       }
       backPressedOnce.current = true;
-      ToastAndroid.show('Tekan sekali lagi untuk keluar', ToastAndroid.SHORT);
+      ToastAndroid.show(tFn('exit_toast'), ToastAndroid.SHORT);
       setTimeout(() => { backPressedOnce.current = false; }, 2000);
       return true;
     });
@@ -499,7 +515,7 @@ export default function App() {
       inserted++;
     }
     await reloadData();
-    Alert.alert('✓ Restore Berhasil', `${inserted} transaksi berhasil direstore ke database.`);
+    Alert.alert(tFn('restore_success'), tFn('restore_count', { count: inserted }));
   }, [data, reloadData]);
 
   const handleMergeCustomer = useCallback(async (oldName, newName, sales) => {
@@ -517,14 +533,14 @@ export default function App() {
   const handleSyncDrive = useCallback(async (silent = false) => {
     const valid = await isGdriveTokenValid();
     if (!valid) {
-      if (!silent) Alert.alert('⚠️ Sesi Expired', 'Token Google Drive sudah expired.\nReconnect dulu di Settings → Google Drive.');
+      if (!silent) Alert.alert(tFn('drive_expired2'), tFn('drive_expired_desc'));
       return;
     }
     setDriveSyncing(true);
     try {
       const token = await SecureStore.getItemAsync(GDRIVE_TOKEN_KEY);
       // Cari folder backup
-      const qF = encodeURIComponent(`name='OmsetKu Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+      const qF = encodeURIComponent(`name='Omset Pintar Backup' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
       const folderRes = await fetch(
         `https://www.googleapis.com/drive/v3/files?q=${qF}&fields=files(id)`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -599,13 +615,13 @@ export default function App() {
         await reloadData();
       }
       await doUpload();
-      if (!silent) Alert.alert('✅ Sinkron Selesai',
+      if (!silent) Alert.alert(tFn('sync_done'),
         synced > 0
-          ? `${synced} transaksi baru dari perangkat lain berhasil digabung.\nData gabungan telah diupload ke Drive.`
-          : 'Semua data sudah sinkron.\nTidak ada transaksi baru dari perangkat lain.'
+          ? tFn('sync_new', { count: synced })
+          : tFn('sync_ok')
       );
     } catch(e) {
-      if (!silent) Alert.alert('Sinkron Gagal', String(e));
+      if (!silent) Alert.alert(tFn('sync_fail'), String(e));
     } finally {
       setDriveSyncing(false);
     }
@@ -636,7 +652,7 @@ export default function App() {
       inserted++;
     }
     await reloadData();
-    Alert.alert('✓ Import Berhasil', `${inserted} transaksi berhasil diimport ke database.`);
+    Alert.alert(tFn('import_success'), tFn('import_count', { count: inserted }));
   }, [data, reloadData]);
 
   const handleSettingsUpdate = useCallback(async (fields) => {
@@ -702,15 +718,15 @@ export default function App() {
         <Image source={require('./assets/icon.png')}
           style={{ width:90, height:90, borderRadius:20, marginBottom:20 }} />
         <Text style={{ color:currentTheme.text, fontSize:22, fontWeight:'800', marginBottom:6 }}>
-          OmsetKu
+          {tFn('lock_title')}
         </Text>
         <Text style={{ color:currentTheme.muted, fontSize:14, marginBottom:40, textAlign:'center' }}>
-          Verifikasi identitas untuk melanjutkan
+          {tFn('lock_subtitle')}
         </Text>
         <TouchableOpacity onPress={handleAuthenticate}
           style={{ backgroundColor:currentTheme.primary, borderRadius:16,
             paddingVertical:16, paddingHorizontal:40 }}>
-          <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>🔐 Buka Aplikasi</Text>
+          <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>{tFn('lock_button')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -718,13 +734,14 @@ export default function App() {
 
   const st = getStyles(C);
 
-  const statusText = saveState==='saving' ? 'Menyimpan...'
-    : saveState==='error'  ? 'Gagal simpan!'
-    : `${(data.transactions||[]).filter(t=>!t.deletedAt).length} bon · ${data.activeYear}`;
+  const statusText = saveState==='saving' ? tFn('saving')
+    : saveState==='error'  ? tFn('failed')
+    : `${(data.transactions||[]).filter(t=>!t.deletedAt).length} ${tFn('bon')} · ${data.activeYear}`;
   const statusColor = saveState==='saved' ? C.success
     : saveState==='error' ? C.danger : C.muted;
 
   return (
+    <LanguageContext.Provider value={langCtxValue}>
     <PurchasesContext.Provider value={purchasesCtxValue}>
     <ThemeContext.Provider value={currentTheme}>
     <View style={[{flex:1, backgroundColor:currentTheme.bg}, { paddingTop:Platform.OS==='ios'?44:StatusBar.currentHeight||0 }]}>
@@ -733,14 +750,14 @@ export default function App() {
       {/* Header */}
       <View style={{ flexDirection:'row', alignItems:'center', paddingHorizontal:16, paddingVertical:10, borderBottomWidth:1, borderBottomColor:C.border }}>
         <Image source={require('./assets/logo_header.png')}
-          style={{ width:34, height:34, marginRight:10 }} />
+          style={{ width:34, height:34, marginRight:10, borderRadius:8 }} />
         <View style={{ flex:1 }}>
           <Text style={{ color:C.text, fontSize:13, fontWeight:'800' }}>
-            {data.companyName || 'OmsetKu'}
+            {data.companyName || 'Omset Pintar'}
           </Text>
           <Text style={{ color:statusColor, fontSize:10 }}>{statusText}</Text>
         </View>
-        {/* Toggle dark/light — sebelah ikon pengaturan */}
+        {/* Toggle dark/light */}
         <TouchableOpacity
           onPress={async () => {
             const next = themeMode === 'dark' ? 'light' : 'dark';
@@ -748,9 +765,18 @@ export default function App() {
             await updateSettings(dbRef.current, { themeMode: next });
           }}
           style={{ backgroundColor:C.input, borderRadius:10, padding:8,
-            marginRight:8, borderWidth:1, borderColor:C.border }}>
+            marginRight:6, borderWidth:1, borderColor:C.border }}>
           <Text style={{ fontSize:16 }}>
             {themeMode === 'dark' ? '☀️' : '🌙'}
+          </Text>
+        </TouchableOpacity>
+        {/* Toggle bahasa ID/EN */}
+        <TouchableOpacity
+          onPress={() => langCtxValue.setLang(lang === 'id' ? 'en' : 'id')}
+          style={{ backgroundColor:C.input, borderRadius:10, paddingHorizontal:10, paddingVertical:8,
+            marginRight:6, borderWidth:1, borderColor:C.border }}>
+          <Text style={{ fontSize:11, fontWeight:'800', color:C.text, letterSpacing:0.5 }}>
+            {lang === 'id' ? 'EN' : 'ID'}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowSett(true)}
@@ -776,7 +802,7 @@ export default function App() {
             <Text style={{ fontSize:18, color:tab===t.id?C.accent:C.muted,
               transform:[{scale: tab===t.id?1.2:1}] }}>{t.icon}</Text>
             <Text style={{ fontSize:9, fontWeight:'700', color:tab===t.id?C.accent:C.muted, marginTop:2 }}>
-              {t.label}
+              {tFn(`tab_${t.id}`)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -817,5 +843,6 @@ export default function App() {
     </View>
     </ThemeContext.Provider>
     </PurchasesContext.Provider>
+    </LanguageContext.Provider>
   );
 }

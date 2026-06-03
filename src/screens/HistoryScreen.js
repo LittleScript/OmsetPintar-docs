@@ -5,11 +5,12 @@ import { ThemeContext, getStyles, SalesChip, chipStyle, btnStyle } from '../them
 import { COLORS } from '../constants';
 import { toIdr, fmtDate, genBon, todayStr } from '../utils';
 import { getDb, loadTransactionsPaged, countTransactionsPaged } from '../db';
+import { LanguageContext } from '../contexts';
 
-// refreshSignal naik setiap kali App.js memanggil reloadData — trigger reload History
 function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
   const C = useContext(ThemeContext);
   const st = getStyles(C);
+  const { t } = useContext(LanguageContext);
 
   const { salesList, dateFormat } = data;
   const [search, setSearch]   = useState('');
@@ -86,7 +87,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
     const bonSeq = parseInt(editForm.bonNumOnly, 10) || 1;
     const bonNumber = genBon(bonSeq, data.bonConfig || { prefix:'INV', separator:'-', digitLength:5 });
     if (!editForm.customerName.trim() || amt<=0) {
-      Alert.alert('','Nama dan nominal harus diisi'); return;
+      Alert.alert('', t('name_nominal_req')); return;
     }
     await onEdit(editTx.id, { ...editForm, bonNumber, amount: amt });
     setEditTx(null);
@@ -94,11 +95,11 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
 
   const confirmDelete = (tx) => {
     Alert.alert(
-      'Hapus Transaksi',
+      t('delete_transaction'),
       `Bon ${tx.bonNumber} · ${tx.customerName} · ${toIdr(tx.amount)}`,
       [
-        { text:'Batal', style:'cancel' },
-        { text:'Hapus', style:'destructive', onPress: () => onDelete(tx.id) },
+        { text: t('cancel'), style:'cancel' },
+        { text: t('delete'), style:'destructive', onPress: () => onDelete(tx.id) },
       ]
     );
   };
@@ -114,17 +115,17 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
             <View style={{ backgroundColor:salesColor+'22', paddingHorizontal:8, paddingVertical:2, borderRadius:6 }}>
               <Text style={{ color:salesColor, fontSize:10, fontWeight:'700' }}>{tx.sales}</Text>
             </View>
-            {isDeleted && <Text style={{ color:C.muted, fontSize:10, fontStyle:'italic' }}>dihapus</Text>}
+            {isDeleted && <Text style={{ color:C.muted, fontSize:10, fontStyle:'italic' }}>{t('deleted_label')}</Text>}
             {!isDeleted && tx.editedAt && (
               <TouchableOpacity onPress={() => setEditLogTx(tx)}>
-                <Text style={{ color:C.warning, fontSize:10, fontWeight:'700' }}>✎ edited</Text>
+                <Text style={{ color:C.warning, fontSize:10, fontWeight:'700' }}>{t('edited_label')}</Text>
               </TouchableOpacity>
             )}
           </View>
           {isDeleted ? (
             <TouchableOpacity onPress={() => onRestore(tx.id)}
               style={{ backgroundColor:C.success+'22', borderRadius:8, paddingHorizontal:10, paddingVertical:4 }}>
-              <Text style={{ color:C.success, fontSize:11, fontWeight:'700' }}>↩ Pulihkan</Text>
+              <Text style={{ color:C.success, fontSize:11, fontWeight:'700' }}>{t('restore_btn')}</Text>
             </TouchableOpacity>
           ) : (
             <View style={{ flexDirection:'row', gap:8 }}>
@@ -156,7 +157,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
       {/* Search + filter */}
       <View style={{ padding:14, paddingBottom:0 }}>
         <TextInput value={search} onChangeText={setSearch}
-          placeholder="🔍  Cari nama / no. bon..." placeholderTextColor={C.muted}
+          placeholder={t('search_history')} placeholderTextColor={C.muted}
           style={[st.input, { marginBottom:10, fontSize:14 }]} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
           {['ALL', ...salesList].map((sl, i) => (
@@ -188,14 +189,14 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
           ) : dbItems.length < dbTotal ? null
           : dbTotal > PAGE_SIZE ? (
             <Text style={{ color:C.muted, fontSize:11, textAlign:'center', paddingVertical:12 }}>
-              Semua {dbTotal} bon ditampilkan
+              {t('all_shown', { total: dbTotal })}
             </Text>
           ) : null
         }
         ListEmptyComponent={
           <View style={{ alignItems:'center', paddingVertical:60 }}>
             <Text style={{ fontSize:40, marginBottom:12 }}>📋</Text>
-            <Text style={{ color:C.muted, fontSize:14 }}>Tidak ada data</Text>
+            <Text style={{ color:C.muted, fontSize:14 }}>{t('no_data')}</Text>
           </View>
         }
       />
@@ -206,11 +207,11 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
           <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined}>
             <ScrollView style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, maxHeight:'85%' }}>
               <Text style={{ color:C.text, fontSize:18, fontWeight:'800', marginBottom:16 }}>
-                ✎  Edit Transaksi
+                {t('edit_transaction')}
               </Text>
               {/* Nomor Bon — prefix static + angka saja */}
               <View style={{ marginBottom:14 }}>
-                <Text style={st.label}>Nomor Bon</Text>
+                <Text style={st.label}>{t('bon_number')}</Text>
                 <View style={[st.input, { flexDirection:'row', alignItems:'center', gap:2 }]}>
                   {(data.bonConfig?.prefix || data.bonConfig?.separator) ? (
                     <Text style={[st.mono, { color:C.muted, fontSize:16, fontWeight:'700' }]}>
@@ -228,9 +229,9 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
                 </View>
               </View>
               {[
-                ['Nama Pelanggan','customerName','words'],
-                ['Nominal (Rp)','amount','number-pad'],
-                ['Catatan','notes','default'],
+                [t('customer_name'),'customerName','words'],
+                [t('nominal'),'amount','number-pad'],
+                [t('notes'),'notes','default'],
               ].map(([lbl,key,kb]) => (
                 <View key={key} style={{ marginBottom:14 }}>
                   <Text style={st.label}>{lbl}</Text>
@@ -243,7 +244,7 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
               ))}
               {/* Tanggal — DateTimePicker */}
               <View style={{ marginBottom:14 }}>
-                <Text style={st.label}>📅 Tanggal</Text>
+                <Text style={st.label}>{t('date_label')}</Text>
                 <TouchableOpacity
                   onPress={() => setShowEditDatePicker(true)}
                   style={[st.input, { flexDirection:'row', justifyContent:'space-between', alignItems:'center' }]}>
@@ -281,11 +282,11 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
               <View style={{ flexDirection:'row', gap:10, marginBottom:30 }}>
                 <TouchableOpacity onPress={() => setEditTx(null)}
                   style={[btnStyle(C.input), {flex:1}]}>
-                  <Text style={{ color:C.muted, fontSize:15, fontWeight:'700' }}>Batal</Text>
+                  <Text style={{ color:C.muted, fontSize:15, fontWeight:'700' }}>{t('cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={saveEdit}
                   style={[btnStyle(C.primary), {flex:2}]}>
-                  <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>Simpan</Text>
+                  <Text style={{ color:'#fff', fontSize:16, fontWeight:'800' }}>{t('save')}</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -299,20 +300,20 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
             onPress={() => setEditLogTx(null)} activeOpacity={1}>
             <View style={{ backgroundColor:C.card, borderTopLeftRadius:24, borderTopRightRadius:24, padding:20, paddingBottom:36 }}>
               <Text style={{ color:C.text, fontSize:16, fontWeight:'800', marginBottom:16 }}>
-                📋 Log Perubahan
+                {t('change_log')}
               </Text>
               <Text style={{ color:C.muted, fontSize:11, marginBottom:8 }}>
-                Terakhir diedit: {editLogTx.editedAt ? new Date(editLogTx.editedAt).toLocaleString('id-ID') : '-'}
+                {t('last_edited')} {editLogTx.editedAt ? new Date(editLogTx.editedAt).toLocaleString('id-ID') : '-'}
               </Text>
               {editLogTx.originalValues ? <>
-                <Text style={{ color:C.warning, fontSize:12, fontWeight:'700', marginBottom:6 }}>SEBELUM DIEDIT:</Text>
+                <Text style={{ color:C.warning, fontSize:12, fontWeight:'700', marginBottom:6 }}>{t('before_edit')}</Text>
                 {[
                   ['No. Bon', editLogTx.originalValues.bonNumber],
                   ['Sales',   editLogTx.originalValues.sales],
-                  ['Pelanggan', editLogTx.originalValues.customerName],
-                  ['Nominal', toIdr(editLogTx.originalValues.amount)],
-                  ['Tanggal', fmtDate(editLogTx.originalValues.date, dateFormat)],
-                  ['Catatan', editLogTx.originalValues.notes || '-'],
+                  [t('customer_label2'), editLogTx.originalValues.customerName],
+                  [t('nominal'), toIdr(editLogTx.originalValues.amount)],
+                  [t('date'), fmtDate(editLogTx.originalValues.date, dateFormat)],
+                  [t('notes'), editLogTx.originalValues.notes || '-'],
                 ].map(([label, val]) => (
                   <View key={label} style={{ flexDirection:'row', marginBottom:4 }}>
                     <Text style={{ color:C.muted, fontSize:12, width:80 }}>{label}:</Text>
@@ -320,14 +321,14 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
                   </View>
                 ))}
                 <View style={{ height:1, backgroundColor:C.border, marginVertical:10 }} />
-                <Text style={{ color:C.success, fontSize:12, fontWeight:'700', marginBottom:6 }}>SESUDAH DIEDIT:</Text>
+                <Text style={{ color:C.success, fontSize:12, fontWeight:'700', marginBottom:6 }}>{t('after_edit')}</Text>
                 {[
                   ['No. Bon', editLogTx.bonNumber],
                   ['Sales',   editLogTx.sales],
-                  ['Pelanggan', editLogTx.customerName],
-                  ['Nominal', toIdr(editLogTx.amount)],
-                  ['Tanggal', fmtDate(editLogTx.date, dateFormat)],
-                  ['Catatan', editLogTx.notes || '-'],
+                  [t('customer_label2'), editLogTx.customerName],
+                  [t('nominal'), toIdr(editLogTx.amount)],
+                  [t('date'), fmtDate(editLogTx.date, dateFormat)],
+                  [t('notes'), editLogTx.notes || '-'],
                 ].map(([label, val]) => (
                   <View key={label} style={{ flexDirection:'row', marginBottom:4 }}>
                     <Text style={{ color:C.muted, fontSize:12, width:80 }}>{label}:</Text>
@@ -335,11 +336,11 @@ function HistoryScreen({ data, onDelete, onEdit, onRestore, refreshSignal }) {
                   </View>
                 ))}
               </> : (
-                <Text style={{ color:C.muted, fontSize:13 }}>Tidak ada data original (edited sebelum fitur log aktif)</Text>
+                <Text style={{ color:C.muted, fontSize:13 }}>{t('no_original')}</Text>
               )}
               <TouchableOpacity onPress={() => setEditLogTx(null)}
                 style={{ marginTop:16, backgroundColor:C.input, borderRadius:12, padding:12, alignItems:'center' }}>
-                <Text style={{ color:C.text, fontWeight:'700' }}>Tutup</Text>
+                <Text style={{ color:C.text, fontWeight:'700' }}>{t('close')}</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>

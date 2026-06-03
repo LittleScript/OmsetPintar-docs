@@ -1,6 +1,6 @@
-# OMSETKU — PRD PRICING & MONETISASI v1
+﻿# Omset Pintar — PRD PRICING & MONETISASI v1
 ## Strategi Harga, Tier, dan Gate Fitur
-### Versi 4.7.0+ | Status: SIAP IMPLEMENTASI (mock) — menunggu RevenueCat + Google Play
+### Versi 4.8.0+ | Status: SIAP IMPLEMENTASI (mock) — menunggu RevenueCat + Google Play
 
 ---
 
@@ -201,16 +201,16 @@ PaywallSheet muncul dari bawah (bottom sheet) dengan produk yang relevan.
 
 | RevenueCat ID | Tipe | Harga |
 |---|---|---|
-| `omsetku_sales_unlock` | Non-consumable | Rp 49.000 |
-| `omsetku_sales_pro` | Non-consumable | Rp 89.000 |
-| `omsetku_sales_ultimate` | Non-consumable | Rp 99.000 |
-| `omsetku_analytics_dashboard` | Non-consumable | Rp 49.000 |
-| `omsetku_analytics_customers` | Non-consumable | Rp 49.000 |
-| `omsetku_analytics_export` | Non-consumable | Rp 49.000 |
-| `omsetku_analytics_all` | Non-consumable | Rp 89.000 |
-| `omsetku_backup_sync` | Non-consumable | Rp 49.000 |
-| `omsetku_monthly_plus` | Auto-renewable subscription | Rp 18.900/bln |
-| `omsetku_yearly_plus` | Auto-renewable subscription | Rp 169.000/thn |
+| `Omset Pintar_sales_unlock` | Non-consumable | Rp 49.000 |
+| `Omset Pintar_sales_pro` | Non-consumable | Rp 89.000 |
+| `Omset Pintar_sales_ultimate` | Non-consumable | Rp 99.000 |
+| `Omset Pintar_analytics_dashboard` | Non-consumable | Rp 49.000 |
+| `Omset Pintar_analytics_customers` | Non-consumable | Rp 49.000 |
+| `Omset Pintar_analytics_export` | Non-consumable | Rp 49.000 |
+| `Omset Pintar_analytics_all` | Non-consumable | Rp 89.000 |
+| `Omset Pintar_backup_sync` | Non-consumable | Rp 49.000 |
+| `Omset Pintar_monthly_plus` | Auto-renewable subscription | Rp 18.900/bln |
+| `Omset Pintar_yearly_plus` | Auto-renewable subscription | Rp 169.000/thn |
 
 ---
 
@@ -315,5 +315,5 @@ Distribusi pembelian perkiraan:
 
 ---
 
-*Dokumen ini dibuat 1 Juni 2026 untuk OmsetKu v4.7.0*
+*Terakhir update: 2 Juni 2026 untuk Omset Pintar v4.8.0*
 *Update setiap kali ada perubahan pricing atau fitur gate*
