@@ -116,7 +116,7 @@ Versi terbaru selalu tersedia di: https://littlescript.github.io/OmsetPintar-doc
 ## 11. Kontak
 
 **Email:** aliangkoko@gmail.com  
-**GitHub:** https://littlescript.github.io/OmsetPintar-docs/
+**GitHub:** https://github.com/LittleScript/OmsetPintar-docs
 
 ---
 
